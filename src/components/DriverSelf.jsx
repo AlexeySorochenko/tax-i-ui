@@ -5,18 +5,17 @@ import StatusPills from "./StatusPills.jsx";
 
 /**
  * Driver portal — checklist UX:
- * - Shows expected docs (from /periods/status); if нет статуса — fallback к ["W2","1099NEC","DL"].
- * - For each doc: buttons Upload (file picker) and Photograph (camera on mobile).
- * - On successful upload, refetch status & docs; mark row as Uploaded (green).
+ * - Показывает список требуемых документов (из /periods/status), если статуса нет — ["W2","1099NEC","DL"].
+ * - Для каждого документа: Upload (файлы/пдф) и Photograph (камера на мобиле).
+ * - После удачной загрузки — перезагружаем статус и подсвечиваем строку зелёным (Uploaded).
  */
 export default function DriverSelf({ API, token, me }) {
   const [docs, setDocs] = useState([]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [status, setStatus] = useState(null);
-  const [busyMap, setBusyMap] = useState({}); // per docType: boolean
+  const [busyMap, setBusyMap] = useState({});
   const [error, setError] = useState(null);
 
-  // hidden inputs refs per doc type (two per row)
   const fileInputs = useRef({});
   const camInputs = useRef({});
 
@@ -50,7 +49,6 @@ export default function DriverSelf({ API, token, me }) {
   useEffect(() => { loadDocs(); loadStatus(); }, [me.id, year]);
 
   const expectedDocs = useMemo(() => {
-    // if period exists use it; else show a sensible default checklist
     return status?.period?.expected_docs?.length
       ? status.period.expected_docs
       : ["W2", "1099NEC", "DL"];
@@ -58,14 +56,8 @@ export default function DriverSelf({ API, token, me }) {
 
   const haveSet = useMemo(() => new Set(status?.have || []), [status]);
 
-  const triggerFile = (docType) => {
-    if (!fileInputs.current[docType]) return;
-    fileInputs.current[docType].click();
-  };
-  const triggerCam = (docType) => {
-    if (!camInputs.current[docType]) return;
-    camInputs.current[docType].click();
-  };
+  const triggerFile = (docType) => fileInputs.current[docType]?.click();
+  const triggerCam  = (docType) => camInputs.current[docType]?.click();
 
   const handlePicked = async (docType, file) => {
     if (!file) return;
@@ -85,9 +77,8 @@ export default function DriverSelf({ API, token, me }) {
       setError(String(e));
     } finally {
       setBusy(docType, false);
-      // clean input value to allow reselecting same file
       if (fileInputs.current[docType]) fileInputs.current[docType].value = "";
-      if (camInputs.current[docType]) camInputs.current[docType].value = "";
+      if (camInputs.current[docType])  camInputs.current[docType].value  = "";
     }
   };
 
@@ -129,9 +120,7 @@ export default function DriverSelf({ API, token, me }) {
               return (
                 <tr
                   key={dt}
-                  style={{
-                    background: uploaded ? "rgba(16,185,129,.08)" : "transparent",
-                  }}
+                  style={{ background: uploaded ? "rgba(16,185,129,.08)" : "transparent" }}
                 >
                   <td><b>{dt}</b></td>
                   <td>
@@ -140,7 +129,6 @@ export default function DriverSelf({ API, token, me }) {
                     </span>
                   </td>
                   <td>
-                    {/* hidden inputs per row */}
                     <input
                       ref={(el) => (fileInputs.current[dt] = el)}
                       type="file"
@@ -176,11 +164,7 @@ export default function DriverSelf({ API, token, me }) {
               );
             })}
             {!expectedDocs.length && (
-              <tr>
-                <td colSpan="3" className="note">
-                  No required documents configured for this year.
-                </td>
-              </tr>
+              <tr><td colSpan="3" className="note">No required documents configured for this year.</td></tr>
             )}
           </tbody>
         </table>
@@ -190,17 +174,13 @@ export default function DriverSelf({ API, token, me }) {
         <div className="card">
           <h3>Tax period status</h3>
           {!status && (
-            <div className="note">
-              No status yet for {year}. Your firm will enable your period soon.
-            </div>
+            <div className="note">No status yet for {year}. Your firm will enable your period soon.</div>
           )}
           {status && (
             <div>
               <div className="kv" style={{ marginTop: 6 }}>
-                <div className="k">Stage</div>
-                <div><span className="badge">{status.period?.stage}</span></div>
-                <div className="k">Year</div>
-                <div>{status.period?.year}</div>
+                <div className="k">Stage</div><div><span className="badge">{status.period?.stage}</span></div>
+                <div className="k">Year</div><div>{status.period?.year}</div>
               </div>
               <StatusPills title="Expected" items={status.period?.expected_docs || []} />
               <StatusPills title="Have" tone="ok" items={status.have || []} />
@@ -212,9 +192,7 @@ export default function DriverSelf({ API, token, me }) {
         <div className="card">
           <h3>My uploads</h3>
           {docs.length === 0 && <p className="note">No documents yet.</p>}
-          <div>
-            {docs.map((d) => <DocCard key={d.id} d={d} />)}
-          </div>
+          <div>{docs.map((d) => <DocCard key={d.id} d={d} />)}</div>
         </div>
       </div>
     </div>
