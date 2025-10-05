@@ -3,28 +3,27 @@ import { authHeaders } from "./api.js";
 import DocCard from "./DocCard.jsx";
 
 /**
- * Driver portal — полностью динамический чек-лист:
- * - НЕ знает типов документов;
+ * Полностью динамический чек-лист:
+ * - НЕ содержит хардкода типов документов;
  * - Берёт чек-лист с бэка: GET /api/v1/periods/status/{me.id}/{year}
- *   Формат ожидается такой:
- *     1) { status: "not_started", message: "..." }
+ *   Форматы ответов:
+ *     1) { status: "not_started", message }
  *     2) { period_id, stage, checklist: [{ document, status }, ...] }
- * - Кнопки Upload/Photograph активны только при status in ["missing","needs_review","rejected"].
- * - После успешной загрузки перезагружаем статус и список документов.
+ * - Кнопки Upload/Photograph активны только при status ∈ {"missing","needs_review","rejected"}.
+ * - После успешной загрузки перезагружаем чек-лист и список документов.
  */
 export default function DriverSelf({ API, token, me }) {
   const [year, setYear] = useState(new Date().getFullYear());
-  const [periodStatus, setPeriodStatus] = useState(null); // null | {status:'not_started',message} | {period_id,stage,checklist}
+  const [periodStatus, setPeriodStatus] = useState(null);  // null | not_started | нормальный объект
   const [docs, setDocs] = useState([]);
   const [error, setError] = useState(null);
   const [busyDoc, setBusyDoc] = useState(null); // document code currently uploading
 
-  // скрытые инпуты по документ-коду
+  // скрытые инпуты по коду документа
   const fileInputs = useRef({});
-  const camInputs = useRef({});
+  const camInputs  = useRef({});
 
-  const canUploadFor = (itemStatus) =>
-    ["missing", "needs_review", "rejected"].includes(itemStatus || "missing");
+  const canUploadFor = (st) => ["missing", "needs_review", "rejected"].includes(st || "missing");
 
   const loadStatus = async () => {
     setError(null);
@@ -32,9 +31,7 @@ export default function DriverSelf({ API, token, me }) {
       const r = await fetch(`${API}/api/v1/periods/status/${me.id}/${year}`, {
         headers: authHeaders(token),
       });
-      // Бэкенд может вернуть 200 как для not_started, так и для обычного статуса
       const payload = await r.json().catch(async () => {
-        // если тело не JSON
         const txt = await r.text();
         throw new Error(txt || `${r.status} ${r.statusText}`);
       });
@@ -46,7 +43,6 @@ export default function DriverSelf({ API, token, me }) {
   };
 
   const loadDocs = async () => {
-    setError(null);
     try {
       const r = await fetch(`${API}/api/v1/documents/by-driver/${me.id}`, {
         headers: authHeaders(token),
@@ -65,7 +61,7 @@ export default function DriverSelf({ API, token, me }) {
   }, [me.id, year]);
 
   const triggerFile = (code) => fileInputs.current[code]?.click();
-  const triggerCam = (code) => camInputs.current[code]?.click();
+  const triggerCam  = (code) => camInputs.current[code]?.click();
 
   const handlePicked = async (code, file) => {
     if (!file) return;
@@ -73,16 +69,26 @@ export default function DriverSelf({ API, token, me }) {
     setBusyDoc(code);
     try {
       const form = new FormData();
+      // имя поля ДОЛЖНО быть "file"
       form.append("file", file);
-      // Опционально: если бэк поддерживает маппинг по коду требования — передадим.
-      // Это не ломает старый бэк, просто будет проигнорировано.
-      form.append("expected_document_code", code);
 
-      await fetch(`${API}/api/v1/documents/upload/${me.id}`, {
+      // твоя идея: передать год и тип документа через query — это безопасно
+      const url = `${API}/api/v1/documents/upload/${me.id}?year=${encodeURIComponent(
+        year
+      )}&document_type_code=${encodeURIComponent(code)}`;
+
+      const res = await fetch(url, {
         method: "POST",
-        headers: authHeaders(token),
+        headers: authHeaders(token), // НЕ ставить Content-Type вручную!
         body: form,
       });
+
+      if (!res.ok) {
+        const txt = await res.text();
+        console.error("Upload failed", res.status, txt);
+        throw new Error(`Upload failed: ${res.status} ${txt}`);
+      }
+
       await loadStatus();
       await loadDocs();
     } catch (e) {
@@ -90,15 +96,16 @@ export default function DriverSelf({ API, token, me }) {
     } finally {
       setBusyDoc(null);
       if (fileInputs.current[code]) fileInputs.current[code].value = "";
-      if (camInputs.current[code]) camInputs.current[code].value = "";
+      if (camInputs.current[code])  camInputs.current[code].value  = "";
     }
   };
 
-  // Удобные геттеры
   const isNotStarted =
     periodStatus && typeof periodStatus === "object" && periodStatus.status === "not_started";
-  const checklist = !isNotStarted && periodStatus?.checklist ? periodStatus.checklist : []; // [{document, status}]
-  const stage = !isNotStarted ? periodStatus?.stage : null;
+  const checklist = !isNotStarted && Array.isArray(periodStatus?.checklist)
+    ? periodStatus.checklist
+    : []; // [{document, status}]
+  const stage    = !isNotStarted ? periodStatus?.stage : null;
   const periodId = !isNotStarted ? periodStatus?.period_id : null;
 
   return (
@@ -120,15 +127,14 @@ export default function DriverSelf({ API, token, me }) {
 
       {error && <div className="alert" style={{ margin: "10px 0" }}>{error}</div>}
 
-      {/* Блок статуса периода */}
+      {/* Статус периода */}
       <div className="card" style={{ marginTop: 10 }}>
         <h3>Tax period</h3>
-        {isNotStarted && (
+        {isNotStarted ? (
           <div className="note" style={{ marginTop: 6 }}>
             {periodStatus?.message || `Your firm has not enabled your ${year} period yet.`}
           </div>
-        )}
-        {!isNotStarted && (
+        ) : (
           <div className="kv" style={{ marginTop: 6 }}>
             <div className="k">Year</div><div>{year}</div>
             <div className="k">Stage</div><div><span className="badge">{stage}</span></div>
@@ -140,6 +146,7 @@ export default function DriverSelf({ API, token, me }) {
       {/* Чек-лист */}
       <div className="card" style={{ marginTop: 12 }}>
         <h3>Checklist</h3>
+
         {isNotStarted && (
           <p className="note" style={{ marginTop: 4 }}>
             Once your firm enables the period, required documents will appear here.
@@ -161,10 +168,11 @@ export default function DriverSelf({ API, token, me }) {
             </thead>
             <tbody>
               {checklist.map((item) => {
-                const code = item.document; // напр. "W2", "DL", ...
-                const st = item.status;     // missing|uploaded|needs_review|approved|rejected
+                const code = item.document; // "W2", "DL", ...
+                const st   = item.status;   // missing|uploaded|needs_review|approved|rejected
                 const done = st === "uploaded" || st === "approved";
                 const actionable = canUploadFor(st);
+
                 return (
                   <tr
                     key={code}
@@ -177,7 +185,7 @@ export default function DriverSelf({ API, token, me }) {
                       </span>
                     </td>
                     <td>
-                      {/* hidden inputs */}
+                      {/* скрытые инпуты */}
                       <input
                         ref={(el) => (fileInputs.current[code] = el)}
                         type="file"
@@ -189,7 +197,7 @@ export default function DriverSelf({ API, token, me }) {
                         ref={(el) => (camInputs.current[code] = el)}
                         type="file"
                         accept="image/*"
-                        capture="environment"   /* на десктопах игнорируется — это норма */
+                        capture="environment"   /* на десктопах игнорируется — норма */
                         style={{ display: "none" }}
                         onChange={(e) => handlePicked(code, e.target.files?.[0])}
                       />
@@ -222,7 +230,7 @@ export default function DriverSelf({ API, token, me }) {
         )}
       </div>
 
-      {/* Мои загрузки — чтобы видеть распарсенные поля/качество */}
+      {/* История загрузок */}
       <div className="card" style={{ marginTop: 12 }}>
         <h3>My uploads</h3>
         {docs.length === 0 && <p className="note">No documents yet.</p>}
