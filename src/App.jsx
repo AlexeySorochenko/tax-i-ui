@@ -2,17 +2,8 @@ import React, { useState } from "react";
 import Login from "./components/Login.jsx";
 import Drivers from "./components/Drivers.jsx";
 import DriverDetail from "./components/DriverDetail.jsx";
+import DriverSelf from "./components/DriverSelf.jsx";
 import { fetchMe } from "./components/api.js";
-
-// простой экран для водителя (минимум, чтобы не падало)
-function DriverSelf({ me }) {
-  return (
-    <div>
-      <h2>My Documents</h2>
-      <p className="note">Welcome, {me?.email}. Upload & status pages will be available here.</p>
-    </div>
-  );
-}
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
 
@@ -70,7 +61,12 @@ export default function App() {
       {token && me?.role === "accountant" && driver && (
         <div className="grid">
           <div className="card">
-            <DriverDetail API={API} token={token} driver={driver} onBack={() => setDriver(null)} />
+            <DriverDetail
+              API={API}
+              token={token}
+              driver={driver}
+              onBack={() => setDriver(null)}
+            />
           </div>
         </div>
       )}
@@ -78,7 +74,7 @@ export default function App() {
       {token && me?.role === "driver" && (
         <div className="grid">
           <div className="card">
-            <DriverSelf me={me} />
+            <DriverSelf API={API} token={token} me={me} />
           </div>
         </div>
       )}
