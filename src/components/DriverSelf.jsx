@@ -1,24 +1,27 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { authHeaders } from "./api.js";
 import DocCard from "./DocCard.jsx";
 import StatusPills from "./StatusPills.jsx";
 
 /**
- * Driver portal:
- * - Upload document (image/PDF). On mobile, opens camera (capture='environment').
- * - View tax period status (read-only).
- * - See own documents list.
- *
- * NOTE: ensure/advance period endpoints обычно только для accountant,
- * поэтому здесь их нет, чтобы не ловить 403.
+ * Driver portal — checklist UX:
+ * - Shows expected docs (from /periods/status); if нет статуса — fallback к ["W2","1099NEC","DL"].
+ * - For each doc: buttons Upload (file picker) and Photograph (camera on mobile).
+ * - On successful upload, refetch status & docs; mark row as Uploaded (green).
  */
 export default function DriverSelf({ API, token, me }) {
   const [docs, setDocs] = useState([]);
   const [year, setYear] = useState(new Date().getFullYear());
   const [status, setStatus] = useState(null);
-  const [file, setFile] = useState(null);
-  const [busy, setBusy] = useState(false);
+  const [busyMap, setBusyMap] = useState({}); // per docType: boolean
   const [error, setError] = useState(null);
+
+  // hidden inputs refs per doc type (two per row)
+  const fileInputs = useRef({});
+  const camInputs = useRef({});
+
+  const setBusy = (docType, v) =>
+    setBusyMap((m) => ({ ...m, [docType]: v }));
 
   const loadDocs = async () => {
     try {
@@ -46,9 +49,28 @@ export default function DriverSelf({ API, token, me }) {
 
   useEffect(() => { loadDocs(); loadStatus(); }, [me.id, year]);
 
-  const upload = async () => {
+  const expectedDocs = useMemo(() => {
+    // if period exists use it; else show a sensible default checklist
+    return status?.period?.expected_docs?.length
+      ? status.period.expected_docs
+      : ["W2", "1099NEC", "DL"];
+  }, [status]);
+
+  const haveSet = useMemo(() => new Set(status?.have || []), [status]);
+
+  const triggerFile = (docType) => {
+    if (!fileInputs.current[docType]) return;
+    fileInputs.current[docType].click();
+  };
+  const triggerCam = (docType) => {
+    if (!camInputs.current[docType]) return;
+    camInputs.current[docType].click();
+  };
+
+  const handlePicked = async (docType, file) => {
     if (!file) return;
-    setBusy(true); setError(null);
+    setError(null);
+    setBusy(docType, true);
     try {
       const form = new FormData();
       form.append("file", file);
@@ -57,13 +79,15 @@ export default function DriverSelf({ API, token, me }) {
         headers: authHeaders(token),
         body: form,
       });
-      setFile(null);
       await loadDocs();
       await loadStatus();
     } catch (e) {
       setError(String(e));
     } finally {
-      setBusy(false);
+      setBusy(docType, false);
+      // clean input value to allow reselecting same file
+      if (fileInputs.current[docType]) fileInputs.current[docType].value = "";
+      if (camInputs.current[docType]) camInputs.current[docType].value = "";
     }
   };
 
@@ -86,26 +110,90 @@ export default function DriverSelf({ API, token, me }) {
 
       {error && <div className="alert" style={{ margin: "10px 0" }}>{error}</div>}
 
-      <div className="grid grid-cols-2" style={{ marginTop: 10 }}>
-        <div className="card">
-          <h3>Upload document</h3>
-          <div className="row" style={{ marginTop: 8 }}>
-            <input
-              type="file"
-              accept="image/*,.pdf"
-              capture="environment"   /* на мобиле откроет камеру */
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-            />
-            <button onClick={upload} disabled={!file || busy}>Upload</button>
-          </div>
-          <p className="note" style={{ marginTop: 8 }}>
-            Supports photos and PDFs. We’ll auto-enhance, OCR and extract fields.
-          </p>
-        </div>
+      <div className="card" style={{ marginTop: 10 }}>
+        <h3>Checklist</h3>
+        <p className="note" style={{ marginTop: 4 }}>
+          Upload or photograph each required document. Rows turn green when uploaded successfully.
+        </p>
+        <table style={{ marginTop: 8 }}>
+          <thead>
+            <tr>
+              <th style={{ width: 160 }}>Document</th>
+              <th>Status</th>
+              <th style={{ width: 320 }}>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {expectedDocs.map((dt) => {
+              const uploaded = haveSet.has(dt);
+              return (
+                <tr
+                  key={dt}
+                  style={{
+                    background: uploaded ? "rgba(16,185,129,.08)" : "transparent",
+                  }}
+                >
+                  <td><b>{dt}</b></td>
+                  <td>
+                    <span className={`badge ${uploaded ? "ok" : "warn"}`}>
+                      {uploaded ? "Uploaded" : "Missing"}
+                    </span>
+                  </td>
+                  <td>
+                    {/* hidden inputs per row */}
+                    <input
+                      ref={(el) => (fileInputs.current[dt] = el)}
+                      type="file"
+                      accept="image/*,.pdf"
+                      style={{ display: "none" }}
+                      onChange={(e) => handlePicked(dt, e.target.files?.[0])}
+                    />
+                    <input
+                      ref={(el) => (camInputs.current[dt] = el)}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      style={{ display: "none" }}
+                      onChange={(e) => handlePicked(dt, e.target.files?.[0])}
+                    />
+                    <div className="row">
+                      <button
+                        className="secondary"
+                        onClick={() => triggerFile(dt)}
+                        disabled={!!busyMap[dt]}
+                      >
+                        Upload
+                      </button>
+                      <button
+                        onClick={() => triggerCam(dt)}
+                        disabled={!!busyMap[dt]}
+                      >
+                        Photograph
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {!expectedDocs.length && (
+              <tr>
+                <td colSpan="3" className="note">
+                  No required documents configured for this year.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
 
+      <div className="grid grid-cols-2" style={{ marginTop: 14 }}>
         <div className="card">
           <h3>Tax period status</h3>
-          {!status && <div className="note">No status yet for {year}.</div>}
+          {!status && (
+            <div className="note">
+              No status yet for {year}. Your firm will enable your period soon.
+            </div>
+          )}
           {status && (
             <div>
               <div className="kv" style={{ marginTop: 6 }}>
@@ -120,13 +208,13 @@ export default function DriverSelf({ API, token, me }) {
             </div>
           )}
         </div>
-      </div>
 
-      <div className="card" style={{ marginTop: 14 }}>
-        <h3>Documents</h3>
-        {docs.length === 0 && <p className="note">No documents yet.</p>}
-        <div>
-          {docs.map((d) => <DocCard key={d.id} d={d} />)}
+        <div className="card">
+          <h3>My uploads</h3>
+          {docs.length === 0 && <p className="note">No documents yet.</p>}
+          <div>
+            {docs.map((d) => <DocCard key={d.id} d={d} />)}
+          </div>
         </div>
       </div>
     </div>
