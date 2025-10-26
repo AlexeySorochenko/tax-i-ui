@@ -14,12 +14,16 @@ export default function App() {
   const [driver, setDriver] = useState(null);
   const [error, setError] = useState(null);
 
+  // вкладки в драйверском кабинете
+  const [driverTab, setDriverTab] = useState("documents"); // 'documents' | 'business'
+
   const onLoggedIn = async (tok) => {
     setToken(tok);
     setError(null);
     try {
       const user = await fetchMe(API, tok);
-      setMe(user); // {id,email,name,role}
+      setMe(user);
+      setDriverTab("documents");
     } catch (e) {
       setError(String(e));
     }
@@ -30,6 +34,7 @@ export default function App() {
     setMe(null);
     setDriver(null);
     setError(null);
+    setDriverTab("documents");
   };
 
   return (
@@ -74,10 +79,36 @@ export default function App() {
 
       {token && me?.role === "driver" && (
         <div className="grid">
+          {/* переключатель вкладок */}
           <div className="card">
-            <DriverSelf API={API} token={token} me={me} />
+            <div className="row spread">
+              <div className="row" style={{ gap: 8 }}>
+                <button
+                  className={driverTab === "documents" ? "" : "secondary"}
+                  onClick={() => setDriverTab("documents")}
+                >
+                  Documents
+                </button>
+                <button
+                  className={driverTab === "business" ? "" : "secondary"}
+                  onClick={() => setDriverTab("business")}
+                >
+                  Business
+                </button>
+              </div>
+              <span className="badge">{me.email}</span>
+            </div>
           </div>
-          <BusinessPanel API={API} token={token} me={me} />
+
+          {driverTab === "documents" && (
+            <div className="card">
+              <DriverSelf API={API} token={token} me={me} />
+            </div>
+          )}
+
+          {driverTab === "business" && (
+            <BusinessPanel API={API} token={token} me={me} />
+          )}
         </div>
       )}
 
