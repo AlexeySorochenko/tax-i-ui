@@ -2,13 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { jget, jput, jpost } from "./api.js";
 import ExpenseWizard from "./ExpenseWizard.jsx";
 
-/** Эндпоинты:
- * GET  /api/v1/business/profiles/{user_id}
- * POST /api/v1/business/profiles                     { name, business_code?, ein? }
- * GET  /api/v1/business/{profile_id}/expenses/{year}
- * PUT  /api/v1/business/{profile_id}/expenses/{year} { expenses:[{code,amount}] }
- */
-
 export default function BusinessPanel({ API, token, me }) {
   const [profiles, setProfiles] = useState([]);
   const [profileId, setProfileId] = useState(null);
@@ -22,6 +15,11 @@ export default function BusinessPanel({ API, token, me }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
+  const total = useMemo(
+    () => items.reduce((s,i)=> s + (typeof i.amount==='number'? i.amount : 0), 0),
+    [items]
+  );
+
   const loadProfiles = async () => {
     try {
       const arr = await jget(`${API}/api/v1/business/profiles/${me.id}`, token);
@@ -29,13 +27,11 @@ export default function BusinessPanel({ API, token, me }) {
       if (!profileId && arr?.length) setProfileId(arr[0].id);
     } catch (e) { setError(String(e)); }
   };
-
   const loadDetails = async () => {
     if (!profileId) return setDetails(null);
     try { setDetails(await jget(`${API}/api/v1/business/profiles/${profileId}`, token)); }
     catch { setDetails(null); }
   };
-
   const loadItems = async () => {
     if (!profileId) return setItems([]);
     try {
@@ -43,65 +39,48 @@ export default function BusinessPanel({ API, token, me }) {
       setItems(Array.isArray(data) ? data : []);
     } catch (e) { setItems([]); setError(String(e)); }
   };
-
-  useEffect(() => { loadProfiles(); /* eslint-disable-next-line */ }, []);
-  useEffect(() => { if (profileId){ loadDetails(); loadItems(); } /* eslint-disable-next-line */ }, [profileId]);
-  useEffect(() => { if (profileId){ loadItems(); } /* eslint-disable-next-line */ }, [year]);
-
-  const total = useMemo(
-    () => items.reduce((s,i)=> s + (typeof i.amount==='number' ? i.amount : 0), 0),
-    [items]
-  );
+  useEffect(()=>{ loadProfiles(); /* eslint-disable-next-line */ },[]);
+  useEffect(()=>{ if(profileId){ loadDetails(); loadItems(); } /* eslint-disable-next-line */ },[profileId]);
+  useEffect(()=>{ if(profileId){ loadItems(); } /* eslint-disable-next-line */ },[year]);
 
   const createProfile = async () => {
     if (!newName.trim()) return;
     setCreating(true); setError(null);
-    try {
+    try{
       await jpost(`${API}/api/v1/business/profiles`, token, {
-        name: newName.trim(),
-        ...(newCode.trim() ? {business_code:newCode.trim()} : {}),
-        ...(newEIN.trim() ? {ein:newEIN.trim()} : {}),
+        name:newName.trim(),
+        ...(newCode.trim()?{business_code:newCode.trim()}:{}),
+        ...(newEIN.trim()?{ein:newEIN.trim()}:{}),
       });
       setNewName(""); setNewCode(""); setNewEIN("");
       await loadProfiles();
-    } catch (e) { setError(String(e)); }
-    finally { setCreating(false); }
+    }catch(e){ setError(String(e)); }
+    finally{ setCreating(false); }
   };
 
   const saveOne = async (code, amount) => {
     if (!profileId) return;
     setSaving(true); setError(null);
-    try {
-      await jput(`${API}/api/v1/business/${profileId}/expenses/${year}`, token, { expenses: [{code, amount}] });
-      // локально обновим без перезагрузки
+    try{
+      await jput(`${API}/api/v1/business/${profileId}/expenses/${year}`, token, { expenses:[{code, amount}] });
       setItems(prev => prev.map(x => x.code===code ? {...x, amount} : x));
-    } catch (e) { setError(String(e)); }
-    finally { setSaving(false); }
-  };
-
-  const saveAll = async (arr) => {
-    setSaving(true); setError(null);
-    try {
-      await jput(`${API}/api/v1/business/${profileId}/expenses/${year}`, token,
-        { expenses: arr.map(({code, amount})=>({code, amount})) });
-      await loadItems();
-    } catch (e) { setError(String(e)); }
-    finally { setSaving(false); }
+    }catch(e){ setError(String(e)); }
+    finally{ setSaving(false); }
   };
 
   return (
     <div className="card">
-      <div className="row spread">
-        <h3>Business</h3>
-        <div className="row"><span className="badge">Total ${total.toFixed(2)}</span></div>
+      <div className="row">
+        <h2 style={{margin:0}}>Business</h2>
+        <span className="badge rightChip">Total ${total.toFixed(2)}</span>
       </div>
 
-      {error && <div className="alert" style={{marginTop:6}}>{error}</div>}
+      {error && <div className="alert section">{String(error)}</div>}
 
-      <div className="card" style={{marginTop:10}}>
-        <h4>Create profile</h4>
+      <div className="card section">
+        <h4>Profile & Tax Year</h4>
         <div className="row" style={{gap:8, marginTop:6}}>
-          <select value={profileId || ""} onChange={(e)=>setProfileId(e.target.value?Number(e.target.value):null)} style={{minWidth:220}}>
+          <select value={profileId || ""} onChange={(e)=>setProfileId(e.target.value?Number(e.target.value):null)} style={{minWidth:260}}>
             {!profiles.length && <option value="">No profiles</option>}
             {profiles.map(p=> <option key={p.id} value={p.id}>{p.name} ({p.business_code||"—"})</option>)}
           </select>
@@ -117,7 +96,7 @@ export default function BusinessPanel({ API, token, me }) {
       </div>
 
       {profileId && (
-        <div className="card" style={{marginTop:10}}>
+        <div className="card section">
           <h4>Summary</h4>
           {!details && <div className="note">Loading…</div>}
           {details && (
@@ -136,7 +115,6 @@ export default function BusinessPanel({ API, token, me }) {
           items={items}
           saving={saving}
           onSaveOne={saveOne}
-          onSaveAll={saveAll}
         />
       )}
     </div>
