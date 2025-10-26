@@ -1,3 +1,113 @@
+:root {
+  --bg: #ffffff;
+  --text: #13151a;
+  --muted: #6b7280;
+  --brand: #0ea5e9;
+  --brand-weak: #e6f6ff;
+  --border: #e9edf2;
+  --card: #ffffff;
+  --ok: #16a34a;
+  --warn: #b45309;
+  --err: #ef4444;
+
+  --radius: 14px;
+  --shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
+  --trans: 180ms ease;
+}
+
+.dark {
+  --bg: #0b0f14;
+  --text: #e5e7eb;
+  --muted: #9ca3af;
+  --brand: #38bdf8;
+  --brand-weak: #0b2736;
+  --border: #1f2937;
+  --card: #0f141a;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #f87171;
+  --shadow: 0 10px 28px rgba(0,0,0,0.35);
+}
+
+*{box-sizing:border-box}
+html,body,#root{height:100%}
+body{
+  margin:0;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  color:var(--text); background:var(--bg);
+  transition: background var(--trans), color var(--trans);
+}
+
+.app{max-width:1080px;margin:0 auto;padding:16px}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px;border:1px solid var(--border);border-radius:var(--radius);
+  background:var(--card);box-shadow:var(--shadow)
+}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:var(--brand-weak);color:var(--brand);font-weight:700}
+
+h1{font-size:20px;line-height:1.2;margin:0}
+h2{font-size:18px;line-height:1.25;margin:0 0 8px 0}
+h3{font-size:16px;line-height:1.3;margin:0 0 6px 0;color:var(--text)}
+h4{font-size:14px;line-height:1.3;margin:0 0 4px 0;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+
+.grid{display:grid;gap:14px;margin-top:14px}
+.card{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);
+  transition: background var(--trans), border-color var(--trans), box-shadow var(--trans);
+}
+.section{margin-top:12px}
+
+.row{display:flex;align-items:center;gap:10px}
+.spread{justify-content:space-between}
+
+button,input,select{
+  border:1px solid var(--border);background:#fff;color:var(--text);
+  padding:9px 12px;border-radius:10px;transition: all var(--trans);
+  font-size:14px;
+}
+.dark button,.dark input,.dark select{background:#0b1117}
+button:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+button.secondary{background:transparent}
+button.primary{background:var(--brand);color:#fff;border-color:var(--brand)}
+button.ghost{background:transparent;border-color:transparent}
+
+input::placeholder{color:#9aa3af}
+input.invalid{border-color:var(--err);outline-color:var(--err)}
+
+.badge{
+  padding:4px 8px;border-radius:999px;font-size:12px;
+  background:var(--brand-weak);color:var(--brand)
+}
+.badge.ok{background:rgba(22,163,74,.12);color:var(--ok)}
+.badge.warn{background:rgba(245,158,11,.14);color:var(--warn)}
+.badge.err{background:rgba(239,68,68,.14);color:var(--err)}
+
+.note{color:var(--muted);font-size:13px}
+.alert{
+  padding:10px 12px;border:1px solid var(--err);color:var(--err);
+  border-radius:10px;background:rgba(239,68,68,.06)
+}
+
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--border)}
+th{font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+
+.kv{display:grid;grid-template-columns:180px 1fr;gap:6px 12px}
+.k{color:var(--muted)}
+
+.tabbar{display:flex;gap:8px}
+.tabbar .active{background:var(--brand);color:#fff;border-color:var(--brand)}
+
+.hero{padding:14px;border:1px dashed var(--border);border-radius:var(--radius);
+  background:linear-gradient(180deg,var(--brand-weak),transparent 60%)}
+.tilegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.tile{padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--card);display:flex;align-items:center;justify-content:space-between}
+
+.rightChip{margin-left:auto}
+
 /* === Progress bar (for ExpenseWizard) === */
 .progress{
   height: 10px;
@@ -53,7 +163,7 @@ label.secondary input[type="file"]{
   display: none;
 }
 
-/* === Small helper pills (used for inline hints/errors if needed) === */
+/* === Small helper pills (inline hints/errors) === */
 .pill{
   display: inline-block;
   padding: 4px 8px;
@@ -65,7 +175,7 @@ label.secondary input[type="file"]{
 .pill.err{ background: rgba(239,68,68,.14); color: var(--err); }
 .pill.ok{  background: rgba(22,163,74,.12);  color: var(--ok);  }
 
-/* === Input adornments (used in wizard quick-add buttons) === */
+/* === Input adornments (wizard quick-add buttons) === */
 input[inputmode="decimal"], input[type="text"], input[type="number"]{
   line-height: 1.1;
 }
@@ -76,7 +186,7 @@ input[inputmode="decimal"], input[type="text"], input[type="number"]{
   border: 1px solid var(--border);
 }
 
-/* === Hover for table rows (nice, but very subtle) === */
+/* === Subtle row hover in tables === */
 tbody tr:hover{
   background: rgba(0,0,0,.02);
 }
