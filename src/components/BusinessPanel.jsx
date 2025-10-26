@@ -1,308 +1,144 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { authHeaders, jget, jput, jpost } from "./api.js";
-import ExpenseInterview from "./ExpenseInterview.jsx";
+import { jget, jput, jpost } from "./api.js";
+import ExpenseWizard from "./ExpenseWizard.jsx";
 
-/**
- * Работает с новыми эндпоинтами:
- * - GET  /api/v1/business/profiles/{user_id}
- * - POST /api/v1/business/profiles                         body: { name, business_code?, ein? }
- * - GET  /api/v1/business/{business_profile_id}/expenses/{year}
- * - PUT  /api/v1/business/{business_profile_id}/expenses/{year} body: { expenses: [{code,amount}, ...] }
+/** Эндпоинты:
+ * GET  /api/v1/business/profiles/{user_id}
+ * POST /api/v1/business/profiles                     { name, business_code?, ein? }
+ * GET  /api/v1/business/{profile_id}/expenses/{year}
+ * PUT  /api/v1/business/{profile_id}/expenses/{year} { expenses:[{code,amount}] }
  */
 
 export default function BusinessPanel({ API, token, me }) {
   const [profiles, setProfiles] = useState([]);
   const [profileId, setProfileId] = useState(null);
-
   const [year, setYear] = useState(new Date().getFullYear());
-  const [profileDetails, setProfileDetails] = useState(null);
-
-  const [expenses, setExpenses] = useState([]); // [{ code, label, amount }]
-  const [loadingProfiles, setLoadingProfiles] = useState(true);
-  const [loadingExpenses, setLoadingExpenses] = useState(false);
+  const [details, setDetails] = useState(null);
+  const [items, setItems] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newCode, setNewCode] = useState("");
+  const [newEIN, setNewEIN] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  const [mode, setMode] = useState("interview"); // 'interview' | 'table'
-
-  // создание профиля
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newCode, setNewCode] = useState(""); // NAICS или внутренний код
-  const [newEIN, setNewEIN] = useState("");
-
-  // ----- LOAD -----
   const loadProfiles = async () => {
-    setError(null);
-    setLoadingProfiles(true);
     try {
-      const url = `${API}/api/v1/business/profiles/${me.id}`;
-      const arr = await jget(url, token);
-      const list = Array.isArray(arr) ? arr : [];
-      setProfiles(list);
-      if (!profileId && list.length) setProfileId(list[0].id);
-    } catch (e) {
-      setProfiles([]);
-      setProfileId(null);
-      setError(String(e));
-    } finally {
-      setLoadingProfiles(false);
-    }
+      const arr = await jget(`${API}/api/v1/business/profiles/${me.id}`, token);
+      setProfiles(Array.isArray(arr) ? arr : []);
+      if (!profileId && arr?.length) setProfileId(arr[0].id);
+    } catch (e) { setError(String(e)); }
   };
 
-  const loadProfileDetails = async (pid) => {
-    if (!pid) { setProfileDetails(null); return; }
-    try {
-      const url = `${API}/api/v1/business/profiles/${pid}`;
-      const details = await jget(url, token);
-      setProfileDetails(details || null);
-    } catch {
-      setProfileDetails(null);
-    }
+  const loadDetails = async () => {
+    if (!profileId) return setDetails(null);
+    try { setDetails(await jget(`${API}/api/v1/business/profiles/${profileId}`, token)); }
+    catch { setDetails(null); }
   };
 
-  const loadExpenses = async (pid = profileId, y = year) => {
-    if (!pid) { setExpenses([]); return; }
-    setLoadingExpenses(true);
-    setError(null);
+  const loadItems = async () => {
+    if (!profileId) return setItems([]);
     try {
-      const url = `${API}/api/v1/business/${pid}/expenses/${y}`;
-      const data = await jget(url, token);
-      setExpenses(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setExpenses([]);
-      setError(String(e));
-    } finally {
-      setLoadingExpenses(false);
-    }
+      const data = await jget(`${API}/api/v1/business/${profileId}/expenses/${year}`, token);
+      setItems(Array.isArray(data) ? data : []);
+    } catch (e) { setItems([]); setError(String(e)); }
   };
 
   useEffect(() => { loadProfiles(); /* eslint-disable-next-line */ }, []);
-  useEffect(() => { if (profileId) { loadProfileDetails(profileId); loadExpenses(profileId, year); } /* eslint-disable-next-line */ }, [profileId]);
-  useEffect(() => { if (profileId) loadExpenses(profileId, year); /* eslint-disable-next-line */ }, [year]);
+  useEffect(() => { if (profileId){ loadDetails(); loadItems(); } /* eslint-disable-next-line */ }, [profileId]);
+  useEffect(() => { if (profileId){ loadItems(); } /* eslint-disable-next-line */ }, [year]);
 
-  // ----- CREATE PROFILE -----
-  const createProfile = async () => {
-    if (!newName.trim()) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const url = `${API}/api/v1/business/profiles`;
-      const body = { name: newName.trim() };
-      if (newCode.trim()) body.business_code = newCode.trim();
-      if (newEIN.trim()) body.ein = newEIN.trim();
-      await jpost(url, token, body); // 201 + объект профиля (игнорируем, просто рефрешим)
-      setNewName(""); setNewCode(""); setNewEIN("");
-      await loadProfiles();
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  // ----- SAVE -----
-  // автосохранение одной категории (для интервью)
-  const saveSingle = async (code, amount) => {
-    if (!profileId) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const url = `${API}/api/v1/business/${profileId}/expenses/${year}`;
-      await jput(url, token, { expenses: [{ code, amount }] }); // <— ключевое изменение
-      setExpenses(prev => prev.map(e => e.code === code ? { ...e, amount } : e));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // массовое сохранение всех сумм из таблицы
-  const saveAll = async () => {
-    if (!profileId) return;
-    setSaving(true);
-    setError(null);
-    try {
-      const payload = expenses
-        .filter((e) => typeof e.amount === "number" && !isNaN(e.amount) && e.amount >= 0)
-        .map((e) => ({ code: e.code, amount: e.amount }));
-      const url = `${API}/api/v1/business/${profileId}/expenses/${year}`;
-      await jput(url, token, { expenses: payload }); // <— ключевое изменение
-      await loadExpenses(profileId, year);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // ----- AGG -----
-  const totalEntered = useMemo(
-    () => expenses.reduce((sum, e) => sum + (typeof e.amount === "number" && !isNaN(e.amount) ? e.amount : 0), 0),
-    [expenses]
+  const total = useMemo(
+    () => items.reduce((s,i)=> s + (typeof i.amount==='number' ? i.amount : 0), 0),
+    [items]
   );
 
-  // ----- RENDER -----
+  const createProfile = async () => {
+    if (!newName.trim()) return;
+    setCreating(true); setError(null);
+    try {
+      await jpost(`${API}/api/v1/business/profiles`, token, {
+        name: newName.trim(),
+        ...(newCode.trim() ? {business_code:newCode.trim()} : {}),
+        ...(newEIN.trim() ? {ein:newEIN.trim()} : {}),
+      });
+      setNewName(""); setNewCode(""); setNewEIN("");
+      await loadProfiles();
+    } catch (e) { setError(String(e)); }
+    finally { setCreating(false); }
+  };
+
+  const saveOne = async (code, amount) => {
+    if (!profileId) return;
+    setSaving(true); setError(null);
+    try {
+      await jput(`${API}/api/v1/business/${profileId}/expenses/${year}`, token, { expenses: [{code, amount}] });
+      // локально обновим без перезагрузки
+      setItems(prev => prev.map(x => x.code===code ? {...x, amount} : x));
+    } catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
+  const saveAll = async (arr) => {
+    setSaving(true); setError(null);
+    try {
+      await jput(`${API}/api/v1/business/${profileId}/expenses/${year}`, token,
+        { expenses: arr.map(({code, amount})=>({code, amount})) });
+      await loadItems();
+    } catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div className="card">
       <div className="row spread">
         <h3>Business</h3>
-        <div className="row" style={{ gap: 8 }}>
-          <button
-            className={mode === "interview" ? "" : "secondary"}
-            onClick={() => setMode("interview")}
-            disabled={!profileId || loadingExpenses}
-          >
-            Interview
-          </button>
-          <button
-            className={mode === "table" ? "" : "secondary"}
-            onClick={() => setMode("table")}
-            disabled={!profileId || loadingExpenses}
-          >
-            Table
-          </button>
+        <div className="row"><span className="badge">Total ${total.toFixed(2)}</span></div>
+      </div>
+
+      {error && <div className="alert" style={{marginTop:6}}>{error}</div>}
+
+      <div className="card" style={{marginTop:10}}>
+        <h4>Create profile</h4>
+        <div className="row" style={{gap:8, marginTop:6}}>
+          <select value={profileId || ""} onChange={(e)=>setProfileId(e.target.value?Number(e.target.value):null)} style={{minWidth:220}}>
+            {!profiles.length && <option value="">No profiles</option>}
+            {profiles.map(p=> <option key={p.id} value={p.id}>{p.name} ({p.business_code||"—"})</option>)}
+          </select>
+          <input type="number" value={year} onChange={(e)=>setYear(parseInt(e.target.value||"0"))} style={{width:110}} />
+        </div>
+
+        <div className="row" style={{gap:8, marginTop:10}}>
+          <input placeholder="Business name" value={newName} onChange={e=>setNewName(e.target.value)} />
+          <input placeholder="Business code (optional)" value={newCode} onChange={e=>setNewCode(e.target.value)} />
+          <input placeholder="EIN (optional)" value={newEIN} onChange={e=>setNewEIN(e.target.value)} />
+          <button onClick={createProfile} disabled={creating || !newName.trim()}>{creating ? "Creating…" : "Add"}</button>
         </div>
       </div>
 
-      {error && <div className="alert" style={{ marginTop: 6 }}>{error}</div>}
-
-      {/* Профили и год */}
-      <div className="row" style={{ gap: 8, marginTop: 8 }}>
-        <select
-          value={profileId || ""}
-          onChange={(e) => setProfileId(e.target.value ? Number(e.target.value) : null)}
-          disabled={loadingProfiles}
-          style={{ minWidth: 260 }}
-        >
-          {!profiles.length && <option value="">No profiles</option>}
-          {profiles.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name} ({p.business_code || "—"})
-            </option>
-          ))}
-        </select>
-
-        <input
-          type="number"
-          value={year}
-          onChange={(e) => setYear(parseInt(e.target.value || "0"))}
-          style={{ width: 110 }}
-          disabled={!profileId || loadingExpenses}
-        />
-
-        <button
-          className="secondary"
-          onClick={() => loadExpenses(profileId, year)}
-          disabled={!profileId || loadingExpenses}
-        >
-          {loadingExpenses ? "Loading…" : "Refresh"}
-        </button>
-      </div>
-
-      {/* Создание профиля (водитель) */}
-      <div className="card" style={{ marginTop: 10 }}>
-        <h4>Create business profile</h4>
-        <div className="row" style={{ gap: 8, marginTop: 6 }}>
-          <input placeholder="Business name" value={newName} onChange={(e) => setNewName(e.target.value)} />
-          <input placeholder="Business code (NAICS or tag)" value={newCode} onChange={(e) => setNewCode(e.target.value)} />
-          <input placeholder="EIN (optional)" value={newEIN} onChange={(e) => setNewEIN(e.target.value)} />
-          <button onClick={createProfile} disabled={creating || !newName.trim()}>
-            {creating ? "Creating…" : "Add"}
-          </button>
-        </div>
-      </div>
-
-      {/* Summary */}
       {profileId && (
-        <div className="card" style={{ marginTop: 10 }}>
+        <div className="card" style={{marginTop:10}}>
           <h4>Summary</h4>
-          {!profileDetails && <div className="note">Loading profile…</div>}
-          {profileDetails && (
-            <div className="kv" style={{ marginTop: 6 }}>
-              <div className="k">Name</div><div>{profileDetails.name || "—"}</div>
-              <div className="k">Business code</div><div>{profileDetails.business_code || "—"}</div>
-              <div className="k">EIN</div><div>{profileDetails.ein || "—"}</div>
-              <div className="k">Total (entered)</div><div>${totalEntered.toFixed(2)}</div>
+          {!details && <div className="note">Loading…</div>}
+          {details && (
+            <div className="kv" style={{marginTop:6}}>
+              <div className="k">Name</div><div>{details.name || "—"}</div>
+              <div className="k">Business code</div><div>{details.business_code || "—"}</div>
+              <div className="k">EIN</div><div>{details.ein || "—"}</div>
             </div>
           )}
         </div>
       )}
 
-      {/* Контент */}
-      {!profileId && !loadingProfiles && (
-        <div className="note" style={{ marginTop: 10 }}>
-          Create a profile above to start entering expenses.
-        </div>
-      )}
-
-      {profileId && mode === "interview" && (
-        <ExpenseInterview
+      {profileId && (
+        <ExpenseWizard
           year={year}
-          items={expenses}
+          items={items}
           saving={saving}
-          onChangeAmount={(code, amount) => saveSingle(code, amount)}
+          onSaveOne={saveOne}
+          onSaveAll={saveAll}
         />
       )}
-
-      {profileId && mode === "table" && (
-        <div className="card" style={{ marginTop: 12 }}>
-          <h4>Expenses for {year}</h4>
-          {!expenses.length && <div className="note">No categories.</div>}
-          {!!expenses.length && (
-            <>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ marginTop: 8 }}>
-                  <thead>
-                    <tr>
-                      <th style={{ minWidth: 260 }}>Category</th>
-                      <th style={{ width: 160 }}>Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {expenses.map((e) => (
-                      <tr key={e.code}>
-                        <td><b>{e.label || e.code}</b></td>
-                        <td>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            step="0.01"
-                            placeholder="0.00"
-                            value={e.amount ?? ""}
-                            onChange={(ev) =>
-                              setExpenses(prev =>
-                                prev.map(x => x.code === e.code
-                                  ? { ...x, amount: ev.target.value === "" ? null : Number(ev.target.value) }
-                                  : x
-                                )
-                              )
-                            }
-                            style={{ width: 140 }}
-                            disabled={saving}
-                          />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              <div className="row" style={{ marginTop: 10, gap: 8 }}>
-                <button className="secondary" onClick={() => loadExpenses(profileId, year)} disabled={saving}>
-                  Refresh
-                </button>
-                <button onClick={saveAll} disabled={saving || !expenses.length}>
-                  {saving ? "Saving…" : "Save all"}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      )}
-
-      {error && <div className="alert" style={{ marginTop: 10 }}>{error}</div>}
     </div>
   );
 }
