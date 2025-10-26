@@ -3,6 +3,7 @@ import Login from "./components/Login.jsx";
 import Drivers from "./components/Drivers.jsx";
 import DriverDetail from "./components/DriverDetail.jsx";
 import DriverSelf from "./components/DriverSelf.jsx";
+import BusinessPanel from "./components/BusinessPanel.jsx";
 import { fetchMe } from "./components/api.js";
 
 const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
@@ -76,6 +77,7 @@ export default function App() {
           <div className="card">
             <DriverSelf API={API} token={token} me={me} />
           </div>
+          <BusinessPanel API={API} token={token} me={me} />
         </div>
       )}
 
