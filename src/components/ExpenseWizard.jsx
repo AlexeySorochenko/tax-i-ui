@@ -4,76 +4,125 @@ import React, { useMemo, useState } from "react";
  * Wizard-проход по категориям:
  * - один вопрос на экран
  * - Yes/No → при Yes ввод суммы
- * - Next сохраняет ТОЛЬКО если сумма указана (PUT {expenses:[{code,amount}]})
- * - можно редактировать назад через Back
+ * - Next сохраняет только валидное значение (>=0)
+ * - Запятая в дробной части автоматически превращается в точку
+ * - Кнопка Next неактивна, пока число невалидно (или выбран No)
  */
 
-export default function ExpenseWizard({ year, items, saving, onSaveOne, onSaveAll }) {
+function normalizeNumberInput(value) {
+  if (value === "" || value == null) return null;
+  const s = String(value).replace(",", ".").trim();
+  if (s === "") return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
+
+export default function ExpenseWizard({ year, items, saving, onSaveOne }) {
   const [i, setI] = useState(0);
   const [draft, setDraft] = useState({}); // code -> number|null
+  const [touched, setTouched] = useState({}); // code -> true
 
   const ordered = useMemo(() => items.slice(), [items]);
   const total = useMemo(
-    () => items.reduce((s,x)=> s + (typeof x.amount==='number'?x.amount:0), 0),
+    () => items.reduce((s, x) => s + (typeof x.amount === "number" ? x.amount : 0), 0),
     [items]
   );
 
-  if (!ordered.length) return <div className="note" style={{marginTop:10}}>No expense categories.</div>;
+  if (!ordered.length) {
+    return <div className="note" style={{ marginTop: 10 }}>No expense categories.</div>;
+  }
 
   const cur = ordered[i];
-  const draftVal = draft[cur.code] ?? (cur.amount ?? null);
+  const currentSaved = cur.amount ?? null;
+  const currentDraft = draft[cur.code] ?? currentSaved; // показываем сохранённое как старт
+  const draftStr = currentDraft ?? "";                  // строка в поле ввода
 
-  const chooseYes = () => { if (draftVal == null) setDraft(d=>({...d,[cur.code]: 0})) };
-  const chooseNo  = () => { setDraft(d=>({...d,[cur.code]: null})) };
+  const yesSelected = currentDraft != null;
+  const noSelected  = currentDraft == null;
+
+  const onYes = () => {
+    setTouched(m => ({ ...m, [cur.code]: true }));
+    if (currentDraft == null) {
+      setDraft(m => ({ ...m, [cur.code]: 0 }));
+    }
+  };
+  const onNo = () => {
+    setTouched(m => ({ ...m, [cur.code]: true }));
+    setDraft(m => ({ ...m, [cur.code]: null }));
+  };
+
+  const onChangeAmount = (val) => {
+    setTouched(m => ({ ...m, [cur.code]: true }));
+    const n = normalizeNumberInput(val);
+    setDraft(m => ({ ...m, [cur.code]: n }));
+  };
+
+  const isInvalid = touched[cur.code] && yesSelected && (currentDraft == null || currentDraft < 0);
+  const nextDisabled = saving || (yesSelected && (currentDraft == null || currentDraft < 0));
 
   const onNext = async () => {
-    // сохраняем, если число валидно (>=0) и отличается от сохранённого
-    const val = draft[cur.code];
-    const isNum = typeof val === "number" && !isNaN(val) && val >= 0;
-    const changed = isNum ? (cur.amount !== val) : (cur.amount != null);
-    if (changed) await onSaveOne(cur.code, isNum ? val : null);
-    setI(t => Math.min(t+1, ordered.length-1));
-  };
-  const onBack = () => setI(t => Math.max(t-1, 0));
+    const toSend = draft[cur.code];
+    const was = currentSaved;
 
-  const atEnd = i === ordered.length - 1;
+    // решаем, изменилось ли значение
+    const changed =
+      (toSend == null && was != null) ||
+      (typeof toSend === "number" && toSend >= 0 && toSend !== was);
+
+    if (changed) {
+      await onSaveOne(cur.code, toSend == null ? null : toSend);
+    }
+    setI(t => Math.min(t + 1, ordered.length - 1));
+  };
+
+  const onBack = () => setI(t => Math.max(t - 1, 0));
 
   return (
-    <div className="card" style={{marginTop:12}}>
+    <div className="card section">
       <div className="row spread">
-        <h4>Expense interview — {year}</h4>
-        <span className="note">Step {i+1}/{ordered.length} • Total ${total.toFixed(2)}</span>
+        <h3>Expense interview — {year}</h3>
+        <span className="note">Step {i + 1}/{ordered.length} • Total ${total.toFixed(2)}</span>
       </div>
 
-      <div className="card" style={{marginTop:10, borderStyle:"solid", borderWidth:1}}>
-        <div className="row" style={{gap:8}}>
+      <div className="card section" style={{ borderStyle: "solid", borderWidth: 1 }}>
+        <div className="row" style={{ gap: 8 }}>
           <span className="badge">{cur.code}</span>
-          <b>{cur.label || cur.code}</b>
-        </div>
-        <div style={{marginTop:8}}>Did you have any <b>{cur.label || cur.code}</b> expenses in {year}?</div>
-        <div className="row" style={{gap:8, marginTop:8}}>
-          <button className={draftVal!=null ? "" : "secondary"} onClick={chooseYes} disabled={saving}>Yes</button>
-          <button className={draftVal==null ? "" : "secondary"} onClick={chooseNo} disabled={saving}>No</button>
+          <h2 style={{ margin: 0 }}>{cur.label || cur.code}</h2>
         </div>
 
-        {draftVal!=null && (
-          <div className="row" style={{gap:8, marginTop:10, alignItems:"center"}}>
+        <p style={{ marginTop: 8 }}>
+          Did you have any <b>{cur.label || cur.code}</b> expenses in {year}?
+        </p>
+
+        <div className="row" style={{ gap: 8, marginTop: 6 }}>
+          <button className={yesSelected ? "" : "secondary"} onClick={onYes} disabled={saving}>Yes</button>
+          <button className={noSelected  ? "" : "secondary"} onClick={onNo}  disabled={saving}>No</button>
+        </div>
+
+        {yesSelected && (
+          <div className="row" style={{ gap: 8, marginTop: 12, alignItems: "center" }}>
             <span className="note">Amount</span>
             <input
-              type="number" inputMode="decimal" step="0.01" placeholder="0.00"
-              value={draftVal ?? ""} onChange={(e)=>setDraft(d=>({...d, [cur.code]: e.target.value===""? null : Number(e.target.value)}))}
-              style={{width:160}} disabled={saving}
+              type="text"
+              inputMode="decimal"
+              placeholder="0.00"
+              className={isInvalid ? "invalid" : ""}
+              value={draftStr}
+              onChange={(e) => onChangeAmount(e.target.value)}
+              style={{ width: 180 }}
+              disabled={saving}
             />
-            <button className="secondary" onClick={()=>setDraft(d=>({...d,[cur.code]:(draftVal||0)+50}))} disabled={saving}>+50</button>
-            <button className="secondary" onClick={()=>setDraft(d=>({...d,[cur.code]:(draftVal||0)+100}))} disabled={saving}>+100</button>
-            <button className="secondary" onClick={()=>setDraft(d=>({...d,[cur.code]:(draftVal||0)+250}))} disabled={saving}>+250</button>
+            <button className="secondary" onClick={() => onChangeAmount((currentDraft || 0) + 50)}  disabled={saving}>+50</button>
+            <button className="secondary" onClick={() => onChangeAmount((currentDraft || 0) + 100)} disabled={saving}>+100</button>
+            <button className="secondary" onClick={() => onChangeAmount((currentDraft || 0) + 250)} disabled={saving}>+250</button>
+            {isInvalid && <span className="badge err">Enter a valid number</span>}
           </div>
         )}
       </div>
 
-      <div className="row" style={{marginTop:10, gap:8}}>
-        <button className="secondary" onClick={onBack} disabled={i===0 || saving}>Back</button>
-        <button onClick={onNext} disabled={saving}>{atEnd ? "Finish" : "Next"}</button>
+      <div className="row" style={{ marginTop: 10, gap: 8 }}>
+        <button className="secondary" onClick={onBack} disabled={i === 0 || saving}>Back</button>
+        <button onClick={onNext} disabled={nextDisabled}>{i === ordered.length - 1 ? "Finish" : "Next"}</button>
       </div>
     </div>
   );
