@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from "react";
 
 /**
- * Wizard по расходам:
- * • один вопрос на экран
- * • Yes/No → при Yes ввод суммы
- * • Next сохраняет только валидное значение (>=0)
- * • Запятая в дробной части → точка
- * • Прогресс-бар + подсказки по категории, «почему спрашиваем» и что считается «обычно»
+ * Expense Wizard:
+ * - явный выбор Yes/No (toggle)
+ * - поле суммы только при Yes; запятая → точка
+ * - Next сохраняет только валидные изменения
+ * - прогресс-бар + подсказки
+ * - мобильная удобочитаемость
  */
 
 function normalizeNumberInput(value) {
@@ -17,7 +17,6 @@ function normalizeNumberInput(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-// Короткие подсказки по категориям (можно расширять на бэке — фронт просто покажет текст)
 const HINTS = {
   CAR_PAYMENT: {
     title: "What to include",
@@ -74,7 +73,7 @@ const HINTS = {
   PHONE: {
     title: "What to include",
     body:
-      "Cell phone plan — only the business-use portion (common split 50–80% depending on usage).",
+      "Cell phone plan — only the business-use portion (common split 50–80%).",
     example: "Example: $60/month × 12 × 60% = $432.",
   },
   INTERNET: {
@@ -112,23 +111,20 @@ const DEFAULT_HINT = {
 };
 
 export default function ExpenseWizard({ year, items, saving, onSaveOne }) {
-  const [i, setI] = useState(0);
-  const [draft, setDraft] = useState({});   // code -> number|null
-  const [touched, setTouched] = useState({}); // code -> true
+  const [step, setStep] = useState(0);
+  const [selected, setSelected] = useState({}); // code -> 'yes' | 'no'
+  const [draft, setDraft] = useState({});       // code -> number|null
 
   const ordered = useMemo(() => items.slice(), [items]);
 
-  // прогресс: считаем вопрос «отвеченным», если есть сохранённая сумма или пользователь выбрал Yes/No (есть запись в draft)
+  // answered: есть сохранённая сумма, либо выбран yes/no
   const answeredCount = useMemo(() => {
-    const codesWithAnswer = new Set([
-      ...ordered.filter(x => x.amount != null).map(x => x.code),
-      ...Object.keys(draft),
-    ]);
-    return codesWithAnswer.size;
-  }, [ordered, draft]);
+    const saved = ordered.filter(x => x.amount != null).map(x => x.code);
+    const chosen = Object.keys(selected);
+    return new Set([...saved, ...chosen]).size;
+  }, [ordered, selected]);
 
   const pct = ordered.length ? Math.round((answeredCount / ordered.length) * 100) : 0;
-
   const total = useMemo(
     () => ordered.reduce((s, x) => s + (typeof x.amount === "number" ? x.amount : 0), 0),
     [ordered]
@@ -138,51 +134,48 @@ export default function ExpenseWizard({ year, items, saving, onSaveOne }) {
     return <div className="note" style={{ marginTop: 10 }}>No expense categories.</div>;
   }
 
-  const cur = ordered[i];
-  const currentSaved = cur.amount ?? null;
-  const currentDraft = draft[cur.code] ?? currentSaved;
-  const draftStr = currentDraft ?? "";
+  const cur = ordered[step];
+  const code = cur.code;
+  const savedAmount = cur.amount ?? null;
 
-  const yesSelected = currentDraft != null;
-  const noSelected  = currentDraft == null;
+  const choice = selected[code] ?? (savedAmount != null ? "yes" : undefined);
+  const showAmount = choice === "yes";
+
+  const draftVal = draft[code] ?? (savedAmount ?? null);
+  const draftStr = draftVal ?? "";
 
   const onYes = () => {
-    setTouched(m => ({ ...m, [cur.code]: true }));
-    if (currentDraft == null) setDraft(m => ({ ...m, [cur.code]: 0 }));
+    setSelected(m => ({ ...m, [code]: "yes" }));
+    if (draftVal == null) setDraft(m => ({ ...m, [code]: 0 }));
   };
+
   const onNo = () => {
-    setTouched(m => ({ ...m, [cur.code]: true }));
-    setDraft(m => ({ ...m, [cur.code]: null }));
+    setSelected(m => ({ ...m, [code]: "no" }));
+    setDraft(m => ({ ...m, [code]: null }));
   };
 
   const onChangeAmount = (val) => {
-    setTouched(m => ({ ...m, [cur.code]: true }));
     const n = normalizeNumberInput(val);
-    setDraft(m => ({ ...m, [cur.code]: n }));
+    setDraft(m => ({ ...m, [code]: n }));
   };
 
-  const isInvalid = touched[cur.code] && yesSelected && (currentDraft == null || currentDraft < 0);
-  const nextDisabled = saving || (yesSelected && (currentDraft == null || currentDraft < 0));
+  const invalid = showAmount && (draftVal == null || draftVal < 0);
+  const nextDisabled = saving || (showAmount && (draftVal == null || draftVal < 0)) || !choice;
 
-  const onNext = async () => {
-    const toSend = draft[cur.code];
-    const was = currentSaved;
+  const hint = HINTS[String(code || "").toUpperCase()] || DEFAULT_HINT;
 
-    const changed =
-      (toSend == null && was != null) ||
-      (typeof toSend === "number" && toSend >= 0 && toSend !== was);
-
-    if (changed) {
-      await onSaveOne(cur.code, toSend == null ? null : toSend);
+  const goNext = async () => {
+    // сохраняем при изменении
+    if (choice === "no" && savedAmount != null) {
+      await onSaveOne(code, null);
     }
-    setI(t => Math.min(t + 1, ordered.length - 1));
+    if (choice === "yes" && draftVal != null && draftVal >= 0 && draftVal !== savedAmount) {
+      await onSaveOne(code, draftVal);
+    }
+    setStep(s => Math.min(s + 1, ordered.length - 1));
   };
 
-  const onBack = () => setI(t => Math.max(t - 1, 0));
-
-  // подсказки
-  const hintKey = String(cur.code || "").toUpperCase();
-  const hint = HINTS[hintKey] || DEFAULT_HINT;
+  const goBack = () => setStep(s => Math.max(s - 1, 0));
 
   return (
     <div className="card section">
@@ -192,12 +185,12 @@ export default function ExpenseWizard({ year, items, saving, onSaveOne }) {
           <div className="note">Answer one question at a time. You can edit any step later.</div>
         </div>
         <div className="row" style={{ gap: 8 }}>
-          <span className="badge">Step {i + 1}/{ordered.length}</span>
+          <span className="badge">Step {step + 1}/{ordered.length}</span>
           <span className="badge">Total ${total.toFixed(2)}</span>
         </div>
       </div>
 
-      {/* Прогресс-бар */}
+      {/* progress */}
       <div className="progress" aria-label="Interview progress" style={{ marginTop: 10 }}>
         <div className="progress-bar" style={{ width: `${pct}%` }} />
       </div>
@@ -208,44 +201,60 @@ export default function ExpenseWizard({ year, items, saving, onSaveOne }) {
 
       <div className="card section" style={{ borderStyle: "solid", borderWidth: 1 }}>
         <div className="row" style={{ gap: 8 }}>
-          <span className="badge">{cur.code}</span>
-          <h2 style={{ margin: 0 }}>{cur.label || cur.code}</h2>
+          <span className="badge">{code}</span>
+          <h2 style={{ margin: 0 }}>{cur.label || code}</h2>
         </div>
 
         <p style={{ marginTop: 8 }}>
-          Did you have any <b>{cur.label || cur.code}</b> expenses in {year}?
+          Did you have any <b>{cur.label || code}</b> expenses in {year}?
         </p>
 
-        <div className="row" style={{ gap: 8, marginTop: 6 }}>
-          <button className={yesSelected ? "" : "secondary"} onClick={onYes} disabled={saving}>Yes</button>
-          <button className={noSelected  ? "" : "secondary"} onClick={onNo}  disabled={saving}>No</button>
+        <div className="row" style={{ gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className={`toggle ${choice === "yes" ? "active" : ""}`}
+            aria-pressed={choice === "yes"}
+            onClick={onYes}
+            disabled={saving}
+          >Yes</button>
+          <button
+            type="button"
+            className={`toggle ${choice === "no" ? "active" : ""}`}
+            aria-pressed={choice === "no"}
+            onClick={onNo}
+            disabled={saving}
+          >No</button>
         </div>
 
-        {yesSelected && (
+        {showAmount && (
           <div className="row" style={{ gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
             <span className="note">Amount</span>
             <input
               type="text"
               inputMode="decimal"
               placeholder="0.00"
-              className={isInvalid ? "invalid" : ""}
+              className={invalid ? "invalid" : ""}
               value={draftStr}
               onChange={(e) => onChangeAmount(e.target.value)}
-              style={{ width: 200 }}
+              style={{ width: 200, maxWidth: "100%" }}
               disabled={saving}
             />
-            <button className="secondary" onClick={() => onChangeAmount((currentDraft || 0) + 50)}  disabled={saving}>+50</button>
-            <button className="secondary" onClick={() => onChangeAmount((currentDraft || 0) + 100)} disabled={saving}>+100</button>
-            <button className="secondary" onClick={() => onChangeAmount((currentDraft || 0) + 250)} disabled={saving}>+250</button>
-            {isInvalid && <span className="badge err">Enter a valid number</span>}
+            <button type="button" className="secondary" onClick={() => onChangeAmount((draftVal || 0) + 50)}  disabled={saving}>+50</button>
+            <button type="button" className="secondary" onClick={() => onChangeAmount((draftVal || 0) + 100)} disabled={saving}>+100</button>
+            <button type="button" className="secondary" onClick={() => onChangeAmount((draftVal || 0) + 250)} disabled={saving}>+250</button>
+            {invalid && <span className="badge err">Enter a valid number</span>}
           </div>
         )}
 
-        {/* Подсказки */}
+        {/* hints */}
         <div className="card section" style={{ background: "transparent" }}>
           <h4>{hint.title}</h4>
           <div className="note" style={{ marginTop: 4 }}>{hint.body}</div>
-          {hint.example && <div className="note" style={{ marginTop: 4 }}><b>Example:</b> {hint.example}</div>}
+          {hint.example && (
+            <div className="note" style={{ marginTop: 4 }}>
+              <b>Example:</b> {hint.example}
+            </div>
+          )}
           <div className="note" style={{ marginTop: 6 }}>
             Why we ask: correct categorization helps your accountant maximize deductions and avoid double counting.
           </div>
@@ -253,8 +262,10 @@ export default function ExpenseWizard({ year, items, saving, onSaveOne }) {
       </div>
 
       <div className="row" style={{ marginTop: 10, gap: 8 }}>
-        <button className="secondary" onClick={onBack} disabled={i === 0 || saving}>Back</button>
-        <button onClick={onNext} disabled={nextDisabled}>{i === ordered.length - 1 ? "Finish" : "Next"}</button>
+        <button type="button" className="secondary" onClick={goBack} disabled={step === 0 || saving}>Back</button>
+        <button type="button" onClick={goNext} disabled={nextDisabled}>
+          {step === ordered.length - 1 ? "Finish" : "Next"}
+        </button>
       </div>
     </div>
   );
