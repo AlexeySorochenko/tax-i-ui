@@ -108,88 +108,79 @@ th{font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--mute
 
 .rightChip{margin-left:auto}
 
-/* === Progress bar (for ExpenseWizard) === */
-.progress{
-  height: 10px;
-  background: var(--border);
-  border-radius: 999px;
-  overflow: hidden;
-}
-.progress-bar{
-  height: 100%;
-  background: linear-gradient(90deg, var(--brand), #27c3f6);
-  transition: width 220ms ease;
+/* === Progress bar === */
+.progress{height:10px;background:var(--border);border-radius:999px;overflow:hidden}
+.progress-bar{height:100%;background:linear-gradient(90deg,var(--brand),#27c3f6);transition:width 220ms ease}
+
+/* === Disabled states === */
+button:disabled, input:disabled, select:disabled{
+  opacity:.6; cursor:not-allowed; box-shadow:none !important; transform:none !important;
 }
 
-/* === Disabled states (buttons / inputs) === */
-button:disabled,
-input:disabled,
-select:disabled{
-  opacity: .6;
-  cursor: not-allowed;
-  box-shadow: none !important;
-  transform: none !important;
-}
+/* === Divider util === */
+.divider{height:1px;background:var(--border);margin:12px 0;border:0}
 
-/* === Subtle divider for sections (optional utility) === */
-.divider{
-  height: 1px;
-  background: var(--border);
-  margin: 12px 0;
-  border: 0;
-}
+/* === Fade-in util === */
+.fade-in{animation:fadeIn .18s ease both}
+@keyframes fadeIn{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
 
-/* === Smooth appear / transitions for cards/blocks === */
-.fade-in{
-  animation: fadeIn .18s ease both;
-}
-@keyframes fadeIn{
-  from{ opacity: 0; transform: translateY(2px); }
-  to{ opacity: 1; transform: translateY(0); }
-}
-
-/* === File-upload labels look like buttons === */
+/* === Upload labels as buttons === */
 label.secondary{
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 12px;
-  cursor: pointer;
-  user-select: none;
+  display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);
+  border-radius:10px;padding:9px 12px;cursor:pointer;user-select:none
 }
-label.secondary input[type="file"]{
-  display: none;
-}
+label.secondary input[type="file"]{display:none}
 
-/* === Small helper pills (inline hints/errors) === */
-.pill{
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  background: var(--brand-weak);
-  color: var(--brand);
-}
-.pill.err{ background: rgba(239,68,68,.14); color: var(--err); }
-.pill.ok{  background: rgba(22,163,74,.12);  color: var(--ok);  }
+/* === Pills === */
+.pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;background:var(--brand-weak);color:var(--brand)}
+.pill.err{background:rgba(239,68,68,.14);color:var(--err)}
+.pill.ok{ background:rgba(22,163,74,.12); color:var(--ok) }
 
-/* === Input adornments (wizard quick-add buttons) === */
-input[inputmode="decimal"], input[type="text"], input[type="number"]{
-  line-height: 1.1;
-}
+/* === Inputs === */
+input[inputmode="decimal"], input[type="text"], input[type="number"]{line-height:1.1}
 
-/* === Card emphasis for nested blocks (wizard hint card) === */
-.card.section{
-  background: var(--card);
-  border: 1px solid var(--border);
-}
+/* === Nested card emphasis === */
+.card.section{background:var(--card);border:1px solid var(--border)}
 
-/* === Subtle row hover in tables === */
-tbody tr:hover{
-  background: rgba(0,0,0,.02);
+/* === Table row hover === */
+tbody tr:hover{background:rgba(0,0,0,.02)}
+.dark tbody tr:hover{background:rgba(255,255,255,.03)}
+
+/* === Toggle buttons (Yes/No) === */
+.toggle{
+  border:1px solid var(--border);
+  background:transparent;
+  color:var(--text);
+  padding:10px 16px;
+  border-radius:12px;
+  transition:all var(--trans);
+  min-width:72px;
+  text-align:center;
 }
-.dark tbody tr:hover{
-  background: rgba(255,255,255,.03);
+.toggle.active{
+  background:var(--brand);
+  border-color:var(--brand);
+  color:#fff;
+  box-shadow:0 6px 16px rgba(14,165,233,.25);
+}
+.toggle:not(.active):hover{background:rgba(14,165,233,.06)}
+
+/* === Responsive / mobile-first tweaks === */
+@media (max-width: 720px){
+  .app{padding:12px}
+  .topbar{padding:12px}
+  .grid{gap:12px;margin-top:12px}
+  .card{padding:14px}
+  h1{font-size:18px}
+  h2{font-size:17px}
+  h3{font-size:15px}
+  .kv{grid-template-columns:130px 1fr}
+  .tilegrid{grid-template-columns:1fr}
+  .row{gap:8px}
+  button, input, select{padding:11px 12px;font-size:16px; /* крупные тапы */}
+  input[type="number"], input[inputmode="decimal"]{width:100%}
+  table, thead, tbody, th, td, tr{display:block}
+  thead{display:none}
+  tbody tr{border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:10px}
+  tbody td{border:none;padding:6px 0}
 }
