@@ -1,14 +1,11 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { authHeaders, jget, jput, withQuery } from "./api.js";
+import { authHeaders, jput } from "./api.js";
 import ExpenseInterview from "./ExpenseInterview.jsx";
 
 /**
  * Панель бизнес-профиля и расходов:
- * - выбор профиля и года
- * - карточка Summary
- * - два режима:
- *   1) Interview (умный опрос)
- *   2) Table (табличный ввод)
+ * - Если бизнес-эндпоинты отсутствуют (404), показываем дружелюбное сообщение.
+ * - Режимы: Interview (умный опрос), Table (табличный ввод).
  */
 
 export default function BusinessPanel({ API, token, me }) {
@@ -18,27 +15,39 @@ export default function BusinessPanel({ API, token, me }) {
   const [year, setYear] = useState(new Date().getFullYear());
   const [profileDetails, setProfileDetails] = useState(null);
 
-  const [expenses, setExpenses] = useState([]); // [{ code, label, amount, requires_docs }]
+  const [expenses, setExpenses] = useState([]);
   const [loadingProfiles, setLoadingProfiles] = useState(true);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
-  // режимы отображения
+  const [unavailable, setUnavailable] = useState(false); // модуль не включён/нет эндпоинтов
   const [mode, setMode] = useState("interview"); // 'interview' | 'table'
 
+  // ---- LOADERS ----
   const loadProfiles = async () => {
     setError(null);
     setLoadingProfiles(true);
+    setUnavailable(false);
     try {
-      const url = `${API}/api/v1/business/profiles/${me.id}`;
-      const arr = await jget(url, token);
+      const r = await fetch(`${API}/api/v1/business/profiles/${me.id}`, {
+        headers: authHeaders(token),
+      });
+      if (r.status === 404) {
+        setUnavailable(true);
+        setProfiles([]);
+        setProfileId(null);
+        return;
+      }
+      if (!r.ok) throw new Error(await r.text());
+      const arr = await r.json();
       const list = Array.isArray(arr) ? arr : [];
       setProfiles(list);
       if (!profileId && list.length) setProfileId(list[0].id);
     } catch (e) {
-      setProfiles([]);
       setError(String(e));
+      setProfiles([]);
+      setProfileId(null);
     } finally {
       setLoadingProfiles(false);
     }
@@ -46,14 +55,14 @@ export default function BusinessPanel({ API, token, me }) {
 
   const loadProfileDetails = async (pid) => {
     if (!pid) { setProfileDetails(null); return; }
-    setError(null);
     try {
-      const url = `${API}/api/v1/business/profiles/${pid}`;
-      const details = await jget(url, token);
-      setProfileDetails(details || null);
-    } catch (e) {
+      const r = await fetch(`${API}/api/v1/business/profiles/${pid}`, {
+        headers: authHeaders(token),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      setProfileDetails(await r.json());
+    } catch {
       setProfileDetails(null);
-      setError(String(e));
     }
   };
 
@@ -62,8 +71,11 @@ export default function BusinessPanel({ API, token, me }) {
     setLoadingExpenses(true);
     setError(null);
     try {
-      const url = `${API}/api/v1/business/${pid}/expenses/${y}`;
-      const data = await jget(url, token);
+      const r = await fetch(`${API}/api/v1/business/${pid}/expenses/${y}`, {
+        headers: authHeaders(token),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const data = await r.json();
       setExpenses(Array.isArray(data) ? data : []);
     } catch (e) {
       setExpenses([]);
@@ -74,25 +86,22 @@ export default function BusinessPanel({ API, token, me }) {
   };
 
   useEffect(() => { loadProfiles(); /* eslint-disable-next-line */ }, []);
-  useEffect(() => { loadProfileDetails(profileId); loadExpenses(profileId, year); /* eslint-disable-next-line */ }, [profileId]);
+  useEffect(() => { if (profileId) { loadProfileDetails(profileId); loadExpenses(profileId, year); } /* eslint-disable-next-line */ }, [profileId]);
   useEffect(() => { if (profileId) loadExpenses(profileId, year); /* eslint-disable-next-line */ }, [year]);
 
-  // агрегаты
   const totalEntered = useMemo(
     () => expenses.reduce((sum, e) => sum + (typeof e.amount === "number" && !isNaN(e.amount) ? e.amount : 0), 0),
     [expenses]
   );
 
-  // сохранение одной записи (используется в интервью-режиме с автосохранением)
+  // автосохранение одной категории (используется в Interview)
   const saveSingle = async (code, amount) => {
     if (!profileId) return;
     setSaving(true);
     setError(null);
     try {
       const url = `${API}/api/v1/business/${profileId}/expenses/${year}`;
-      // Бэк ожидает массив {code, amount}; отправим только один изменённый
       await jput(url, token, [{ code, amount }]);
-      // локально обновим без полного рефреша, чтобы UI был отзывчив
       setExpenses(prev => prev.map(e => e.code === code ? { ...e, amount } : e));
     } catch (e) {
       setError(String(e));
@@ -101,7 +110,7 @@ export default function BusinessPanel({ API, token, me }) {
     }
   };
 
-  // табличное сохранение всего массива (массовое обновление)
+  // массовое сохранение в табличном режиме
   const saveAll = async () => {
     if (!profileId) return;
     setSaving(true);
@@ -112,7 +121,6 @@ export default function BusinessPanel({ API, token, me }) {
         .map((e) => ({ code: e.code, amount: e.amount }));
       const url = `${API}/api/v1/business/${profileId}/expenses/${year}`;
       await jput(url, token, payload);
-      // подтянем с бэка (на случай нормализации)
       await loadExpenses(profileId, year);
     } catch (e) {
       setError(String(e));
@@ -120,6 +128,20 @@ export default function BusinessPanel({ API, token, me }) {
       setSaving(false);
     }
   };
+
+  // ===== RENDER =====
+
+  if (unavailable) {
+    return (
+      <div className="card">
+        <h3>Business</h3>
+        <div className="note" style={{ marginTop: 6 }}>
+          Your firm hasn’t enabled the <b>Business expenses</b> module yet.
+          Once it’s available, you’ll see a guided interview here.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
@@ -143,9 +165,7 @@ export default function BusinessPanel({ API, token, me }) {
         </div>
       </div>
 
-      {error && <div className="alert" style={{ marginTop: 6 }}>{error}</div>}
-
-      {/* Выбор профиля и года */}
+      {/* выбор профиля и года */}
       <div className="row" style={{ gap: 8, marginTop: 8 }}>
         <select
           value={profileId || ""}
@@ -179,28 +199,33 @@ export default function BusinessPanel({ API, token, me }) {
       </div>
 
       {/* Summary */}
-      <div className="card" style={{ marginTop: 10 }}>
-        <h4>Summary</h4>
-        {!profileId && <div className="note">Select a business profile.</div>}
-        {profileId && !profileDetails && <div className="note">Loading profile…</div>}
-        {profileId && profileDetails && (
-          <div className="kv" style={{ marginTop: 6 }}>
-            <div className="k">Name</div><div>{profileDetails.name || "—"}</div>
-            <div className="k">Business code</div><div>{profileDetails.business_code || "—"}</div>
-            <div className="k">EIN</div><div>{profileDetails.ein || "—"}</div>
-            <div className="k">Type</div><div>{profileDetails.type || "—"}</div>
-            {profileDetails.last_confirmed_year && (
-              <>
-                <div className="k">Last confirmed</div><div>{profileDetails.last_confirmed_year}</div>
-              </>
-            )}
-            <div className="k">Total (entered)</div><div>${totalEntered.toFixed(2)}</div>
-          </div>
-        )}
-      </div>
+      {profileId && (
+        <div className="card" style={{ marginTop: 10 }}>
+          <h4>Summary</h4>
+          {!profileDetails && <div className="note">Loading profile…</div>}
+          {profileDetails && (
+            <div className="kv" style={{ marginTop: 6 }}>
+              <div className="k">Name</div><div>{profileDetails.name || "—"}</div>
+              <div className="k">Business code</div><div>{profileDetails.business_code || "—"}</div>
+              <div className="k">EIN</div><div>{profileDetails.ein || "—"}</div>
+              <div className="k">Type</div><div>{profileDetails.type || "—"}</div>
+              {profileDetails.last_confirmed_year && (
+                <>
+                  <div className="k">Last confirmed</div><div>{profileDetails.last_confirmed_year}</div>
+                </>
+              )}
+              <div className="k">Total (entered)</div><div>${totalEntered.toFixed(2)}</div>
+            </div>
+          )}
+        </div>
+      )}
 
-      {/* CONTENT */}
-      {!profileId && <div className="note" style={{ marginTop: 10 }}>Create/select a profile to continue.</div>}
+      {/* Контент */}
+      {!profileId && !loadingProfiles && (
+        <div className="note" style={{ marginTop: 10 }}>
+          No profiles yet. Ask your accountant to create one for you.
+        </div>
+      )}
 
       {profileId && mode === "interview" && (
         <ExpenseInterview
@@ -237,15 +262,14 @@ export default function BusinessPanel({ API, token, me }) {
                             step="0.01"
                             placeholder="0.00"
                             value={e.amount ?? ""}
-                            onChange={(ev) => {
-                              const val = ev.target.value;
+                            onChange={(ev) =>
                               setExpenses(prev =>
                                 prev.map(x => x.code === e.code
-                                  ? { ...x, amount: val === "" ? null : Number(val) }
+                                  ? { ...x, amount: ev.target.value === "" ? null : Number(ev.target.value) }
                                   : x
                                 )
-                              );
-                            }}
+                              )
+                            }
                             style={{ width: 140 }}
                             disabled={saving}
                           />
@@ -265,7 +289,7 @@ export default function BusinessPanel({ API, token, me }) {
                 <button className="secondary" onClick={() => loadExpenses(profileId, year)} disabled={saving}>
                   Refresh
                 </button>
-                <button onClick={saveAll} disabled={saving}>
+                <button onClick={saveAll} disabled={saving || !expenses.length}>
                   {saving ? "Saving…" : "Save all"}
                 </button>
               </div>
@@ -273,6 +297,8 @@ export default function BusinessPanel({ API, token, me }) {
           )}
         </div>
       )}
+
+      {error && <div className="alert" style={{ marginTop: 10 }}>{error}</div>}
     </div>
   );
 }
