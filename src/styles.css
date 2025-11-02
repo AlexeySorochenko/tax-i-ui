@@ -184,3 +184,32 @@ tbody tr:hover{background:rgba(0,0,0,.02)}
   tbody tr{border:1px solid var(--border);border-radius:12px;padding:10px;margin-bottom:10px}
   tbody td{border:none;padding:6px 0}
 }
+
+/* === market list: one-column === */
+.tilegrid.market { grid-template-columns: 1fr; }
+
+/* price & rating badges (в топ-правом углу карточки) */
+.price{
+  background: var(--brand-weak);
+  color: var(--brand);
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+.rating{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:12px;
+  padding:4px 8px;
+  border-radius:999px;
+  background:rgba(250,204,21,.12); /* soft gold */
+  color:#a16207;
+  border:1px solid var(--border);
+}
+.dark .rating{ background:rgba(250,204,21,.16); color:#facc15; }
+.ratingNum{ margin-left:2px; opacity:.8; }
+
+/* selected tile highlight (тонкий) */
+.tile.selected{ outline:2px solid var(--brand); }
