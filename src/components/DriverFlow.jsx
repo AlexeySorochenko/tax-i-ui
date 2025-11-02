@@ -7,10 +7,11 @@ import {
   createBusinessProfile,
   getBusinessExpenses,
   putBusinessExpenses,
+  submitPaymentStub,
 } from "../components/api";
 import Onboarding from "./Onboarding";
 import DriverSelf from "./DriverSelf";
-import ExpenseWizard from "./ExpenseWizard"; // ← используем существующий визард
+import ExpenseWizard from "./ExpenseWizard"; // используем ваш визард расходов
 
 /**
  * Состояния флоу по /periods/status:
@@ -18,8 +19,8 @@ import ExpenseWizard from "./ExpenseWizard"; // ← используем сущ�
  *  - NEEDS_PROFILE     → авто-открываем форму профиля (шаг 2 онбординга)
  *  - (локально) expenses → ExpenseWizard (опросник расходов)
  *  - NEEDS_DOCUMENTS   → чек-лист документов
- *  - NEEDS_PAYMENT     → отправка на проверку + чат
- *  - IN_REVIEW         → статус + чат
+ *  - NEEDS_PAYMENT     → оплата/отправка
+ *  - IN_REVIEW         → статус + чат (чат доступен ТОЛЬКО здесь)
  */
 export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
@@ -27,6 +28,13 @@ export default function DriverFlow({ API, token, me, year }) {
   const [err, setErr] = useState("");
   const [firms, setFirms] = useState([]);
   const [subview, setSubview] = useState(null); // "profile" | "expenses" | "documents" | "chat" | null
+
+  // ---- состояние для визарда расходов (хуки на верхнем уровне)
+  const [expBusy, setExpBusy] = useState(false);
+  const [expSaving, setExpSaving] = useState(false);
+  const [expError, setExpError] = useState("");
+  const [expBiz, setExpBiz] = useState(null);     // { id, ... }
+  const [expItems, setExpItems] = useState([]);   // [{ code, label, amount }]
 
   async function refresh() {
     setLoading(true);
@@ -61,16 +69,70 @@ export default function DriverFlow({ API, token, me, year }) {
     }
   }, [flow, subview]);
 
+  // При входе в экран расходов — гарантируем бизнес-профиль и тянем расходы
+  useEffect(() => {
+    let alive = true;
+    async function loadExpenses() {
+      setExpBusy(true); setExpError("");
+      try {
+        // 1) бизнес-профиль
+        const list = await getBusinessProfiles(API, token, me.id);
+        let bp = (Array.isArray(list) && list[0]) || null;
+        if (!bp) {
+          bp = await createBusinessProfile(API, token, {
+            name: "My Business",
+            business_code: "TAXI_EXPENSES",
+          });
+        }
+        if (!alive) return;
+        setExpBiz(bp);
+
+        // 2) расходы за год
+        const ex = await getBusinessExpenses(API, token, bp.id, year);
+        if (!alive) return;
+        setExpItems(Array.isArray(ex) ? ex : []);
+      } catch (e) {
+        if (!alive) return;
+        setExpError(String(e?.message || e));
+      } finally {
+        if (alive) setExpBusy(false);
+      }
+    }
+    if (subview === "expenses") {
+      loadExpenses();
+    }
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [subview, year]);
+
   async function choose(firmId) {
     try {
       await selectFirm(API, token, firmId);
-      await refresh(); // бэкенд переключит на NEEDS_PROFILE → выше откроется форма (один раз)
+      await refresh(); // backend → NEEDS_PROFILE → откроется форма
     } catch (e) {
       alert(String(e?.message || e));
     }
   }
 
-  // ====== Встроенные саб-экраны без переходов ======
+  // Сохранение одной строки расходов
+  async function onSaveOneExpense(code, amountOrNull) {
+    if (!expBiz) return;
+    setExpSaving(true); setExpError("");
+    try {
+      const next = (expItems || []).map(i => i.code === code ? { ...i, amount: amountOrNull } : i);
+      setExpItems(next);
+      await putBusinessExpenses(
+        API, token, expBiz.id, year,
+        next.map(i => ({ code: i.code, amount: i.amount ?? 0 }))
+      );
+    } catch (e) {
+      setExpError(String(e?.message || e));
+    } finally {
+      setExpSaving(false);
+    }
+  }
+
+  // ====== Сабвью (без роутинга) ======
   if (subview === "profile") {
     return (
       <Onboarding
@@ -78,85 +140,24 @@ export default function DriverFlow({ API, token, me, year }) {
         token={token}
         me={me}
         initialStep={2}
-        onDoneNext={() => { setSubview("expenses"); }} // после профиля → к визарду расходов
+        onDoneNext={() => { setSubview("expenses"); }} // после профиля → визард расходов
       />
     );
   }
 
   if (subview === "expenses") {
-    // Локальная логика для визарда расходов (без нового компонента)
-    const [busy, setBusy] = useState(true);
-    const [saving, setSaving] = useState(false);
-    const [error, setError] = useState("");
-    const [biz, setBiz] = useState(null);   // { id, name, ... }
-    const [items, setItems] = useState([]); // [{ code, label, amount|null }]
-
-    useEffect(() => {
-      let alive = true;
-      (async () => {
-        setBusy(true); setError("");
-        try {
-          // 1) гарантируем, что есть бизнес-профиль
-          const list = await getBusinessProfiles(API, token, me.id);
-          let bp = (Array.isArray(list) && list[0]) || null;
-          if (!bp) {
-            bp = await createBusinessProfile(API, token, {
-              name: "My Business",
-              business_code: "TAXI_EXPENSES",
-            });
-          }
-          if (!alive) return;
-          setBiz(bp);
-
-          // 2) тянем список расходов за год
-          const ex = await getBusinessExpenses(API, token, bp.id, year);
-          if (!alive) return;
-          setItems(Array.isArray(ex) ? ex : []);
-        } catch (e) {
-          if (!alive) return;
-          setError(String(e?.message || e));
-        } finally {
-          if (alive) setBusy(false);
-        }
-      })();
-      return () => { alive = false; };
-      // eslint-disable-next-line
-    }, [year]);
-
-    const onSaveOne = async (code, amountOrNull) => {
-      if (!biz) return;
-      setSaving(true); setError("");
-      try {
-        const next = (items || []).map(i => i.code === code ? { ...i, amount: amountOrNull } : i);
-        setItems(next);
-        await putBusinessExpenses(
-          API, token, biz.id, year,
-          next.map(i => ({ code: i.code, amount: i.amount ?? 0 }))
-        );
-      } catch (e) {
-        setError(String(e?.message || e));
-      } finally {
-        setSaving(false);
-      }
-    };
-
-    const onFinished = () => {
-      setSubview("documents"); // после «Finish» идём на загрузку документов
-    };
-
     return (
       <div>
-        {error && <div className="alert" style={{ marginBottom: 8 }}>{error}</div>}
-        {busy
+        {expError && <div className="alert" style={{ marginBottom: 8 }}>{expError}</div>}
+        {expBusy
           ? <div className="card"><div className="note">Loading…</div></div>
           : (
             <ExpenseWizard
               year={year}
-              items={items}
-              onSaveOne={onSaveOne}
-              onFinished={onFinished}
-              // по желанию можно добавить кнопку смены фирмы:
-              // onGoToFirms={() => { setSubview(null); setFlow("NEEDS_FIRM"); }}
+              items={expItems}
+              saving={expSaving}
+              onSaveOne={onSaveOneExpense}
+              onFinished={() => setSubview("documents")} // после «Finish» → документы
             />
           )
         }
@@ -164,24 +165,30 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
+  // ЧАТ — только ПОСЛЕ ОПЛАТЫ (т.е. только при flow === "IN_REVIEW")
+  if (subview === "chat") {
+    if (flow !== "IN_REVIEW") {
+      // защита: если кто-то вдруг дернул setSubview("chat") раньше — игнорируем
+      setSubview(null);
+    } else {
+      return (
+        <div className="card">
+          <h2>Chat</h2>
+          <div className="note">Your accountant will see your messages.</div>
+          <textarea style={{ width: "100%", minHeight: 120 }} placeholder="Type a message..." />
+          <div className="row" style={{ marginTop: 8, justifyContent: "flex-end" }}>
+            <button className="secondary" onClick={() => setSubview(null)}>Back</button>
+            <button onClick={() => alert("Message sent")}>Send</button>
+          </div>
+        </div>
+      );
+    }
+  }
+
   if (subview === "documents") {
     return (
       <div className="card">
         <DriverSelf API={API} token={token} me={me} />
-      </div>
-    );
-  }
-
-  if (subview === "chat") {
-    return (
-      <div className="card">
-        <h2>Chat</h2>
-        <div className="note">Your accountant will see your messages.</div>
-        <textarea style={{ width: "100%", minHeight: 120 }} placeholder="Type a message..." />
-        <div className="row" style={{ marginTop: 8, justifyContent: "flex-end" }}>
-          <button className="secondary" onClick={() => setSubview(null)}>Back</button>
-          <button onClick={() => alert("Message sent")}>Send</button>
-        </div>
       </div>
     );
   }
@@ -239,8 +246,21 @@ export default function DriverFlow({ API, token, me, year }) {
           <h2>Submit for review</h2>
           <p>All documents are ready. Please submit to your accountant.</p>
           <div className="row" style={{ gap: 8 }}>
-            <button onClick={() => setSubview("chat")}>Ask a question</button>
-            <button className="primary" onClick={() => setFlow("IN_REVIEW")}>Submit</button>
+            {/* ЧАТА ЗДЕСЬ НЕТ — он появится только после успешного сабмита */}
+            <button
+              className="primary"
+              onClick={async () => {
+                try {
+                  await submitPaymentStub(API, token, year);
+                  await refresh();          // ожидаем переход в IN_REVIEW
+                  // После refresh() в IN_REVIEW уже появится кнопка «Open chat»
+                } catch (e) {
+                  alert(String(e));
+                }
+              }}
+            >
+              Submit
+            </button>
           </div>
         </div>
       );
@@ -251,6 +271,7 @@ export default function DriverFlow({ API, token, me, year }) {
           <h2>In review</h2>
           <div className="note">Your accountant is reviewing your documents.</div>
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            {/* Теперь чат доступен */}
             <button onClick={() => setSubview("chat")}>Open chat</button>
             <button className="secondary" onClick={() => setSubview("documents")}>View documents</button>
           </div>
