@@ -1,17 +1,25 @@
 import React, { useEffect, useState } from "react";
-import { periodStatus, listFirms, selectFirm } from "../components/api";
+import {
+  periodStatus,
+  listFirms,
+  selectFirm,
+  getBusinessProfiles,
+  createBusinessProfile,
+  getBusinessExpenses,
+  putBusinessExpenses,
+} from "../components/api";
 import Onboarding from "./Onboarding";
 import DriverSelf from "./DriverSelf";
-import DriverExpenses from "./DriverExpenses";
+import ExpenseWizard from "./ExpenseWizard"; // ← используем существующий визард
 
 /**
- * Экран водителя по состоянию флоу из /periods/status:
- *  - NEEDS_FIRM        => выбор бухгалтерской фирмы
- *  - NEEDS_PROFILE     => авто-открываем форму профиля (шаг 2 онбординга)
- *  - (локально) EXPENSES => ваш ExpenseWizard
- *  - NEEDS_DOCUMENTS   => чек-лист документов
- *  - NEEDS_PAYMENT     => отправка на проверку + чат
- *  - IN_REVIEW         => статус + чат
+ * Состояния флоу по /periods/status:
+ *  - NEEDS_FIRM        → выбор фирмы
+ *  - NEEDS_PROFILE     → авто-открываем форму профиля (шаг 2 онбординга)
+ *  - (локально) expenses → ExpenseWizard (опросник расходов)
+ *  - NEEDS_DOCUMENTS   → чек-лист документов
+ *  - NEEDS_PAYMENT     → отправка на проверку + чат
+ *  - IN_REVIEW         → статус + чат
  */
 export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
@@ -70,21 +78,89 @@ export default function DriverFlow({ API, token, me, year }) {
         token={token}
         me={me}
         initialStep={2}
-        onDoneNext={() => { setSubview("expenses"); }}
+        onDoneNext={() => { setSubview("expenses"); }} // после профиля → к визарду расходов
       />
     );
   }
 
   if (subview === "expenses") {
+    // Локальная логика для визарда расходов (без нового компонента)
+    const [busy, setBusy] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState("");
+    const [biz, setBiz] = useState(null);   // { id, name, ... }
+    const [items, setItems] = useState([]); // [{ code, label, amount|null }]
+
+    useEffect(() => {
+      let alive = true;
+      (async () => {
+        setBusy(true); setError("");
+        try {
+          // 1) гарантируем, что есть бизнес-профиль
+          const list = await getBusinessProfiles(API, token, me.id);
+          let bp = (Array.isArray(list) && list[0]) || null;
+          if (!bp) {
+            bp = await createBusinessProfile(API, token, {
+              name: "My Business",
+              business_code: "TAXI_EXPENSES",
+            });
+          }
+          if (!alive) return;
+          setBiz(bp);
+
+          // 2) тянем список расходов за год
+          const ex = await getBusinessExpenses(API, token, bp.id, year);
+          if (!alive) return;
+          setItems(Array.isArray(ex) ? ex : []);
+        } catch (e) {
+          if (!alive) return;
+          setError(String(e?.message || e));
+        } finally {
+          if (alive) setBusy(false);
+        }
+      })();
+      return () => { alive = false; };
+      // eslint-disable-next-line
+    }, [year]);
+
+    const onSaveOne = async (code, amountOrNull) => {
+      if (!biz) return;
+      setSaving(true); setError("");
+      try {
+        const next = (items || []).map(i => i.code === code ? { ...i, amount: amountOrNull } : i);
+        setItems(next);
+        await putBusinessExpenses(
+          API, token, biz.id, year,
+          next.map(i => ({ code: i.code, amount: i.amount ?? 0 }))
+        );
+      } catch (e) {
+        setError(String(e?.message || e));
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    const onFinished = () => {
+      setSubview("documents"); // после «Finish» идём на загрузку документов
+    };
+
     return (
-      <DriverExpenses
-        API={API}
-        token={token}
-        me={me}
-        year={year}
-        onBack={() => setSubview("profile")}
-        onDone={() => setSubview("documents")}
-      />
+      <div>
+        {error && <div className="alert" style={{ marginBottom: 8 }}>{error}</div>}
+        {busy
+          ? <div className="card"><div className="note">Loading…</div></div>
+          : (
+            <ExpenseWizard
+              year={year}
+              items={items}
+              onSaveOne={onSaveOne}
+              onFinished={onFinished}
+              // по желанию можно добавить кнопку смены фирмы:
+              // onGoToFirms={() => { setSubview(null); setFlow("NEEDS_FIRM"); }}
+            />
+          )
+        }
+      </div>
     );
   }
 
