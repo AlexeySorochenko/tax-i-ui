@@ -2,12 +2,13 @@ import React, { useEffect, useState } from "react";
 import { periodStatus, listFirms, selectFirm } from "../components/api";
 import Onboarding from "./Onboarding";
 import DriverSelf from "./DriverSelf";
-import DriverQuestionnaire from "./DriverQuestionnaire";
+import DriverExpenses from "./DriverExpenses";
 
 /**
  * Экран водителя по состоянию флоу из /periods/status:
  *  - NEEDS_FIRM        => выбор бухгалтерской фирмы
- *  - NEEDS_PROFILE     => сразу открываем форму профиля (шаг 2 онбординга)
+ *  - NEEDS_PROFILE     => авто-открываем форму профиля (шаг 2 онбординга)
+ *  - (локально) EXPENSES => ваш ExpenseWizard
  *  - NEEDS_DOCUMENTS   => чек-лист документов
  *  - NEEDS_PAYMENT     => отправка на проверку + чат
  *  - IN_REVIEW         => статус + чат
@@ -17,7 +18,7 @@ export default function DriverFlow({ API, token, me, year }) {
   const [flow, setFlow] = useState(null);
   const [err, setErr] = useState("");
   const [firms, setFirms] = useState([]);
-  const [subview, setSubview] = useState(null); // "profile" | "questionnaire" | "documents" | "chat" | null
+  const [subview, setSubview] = useState(null); // "profile" | "expenses" | "documents" | "chat" | null
 
   async function refresh() {
     setLoading(true);
@@ -45,7 +46,7 @@ export default function DriverFlow({ API, token, me, year }) {
     // eslint-disable-next-line
   }, [flow]);
 
-  // Авто-открываем форму профиля ОДИН РАЗ
+  // Авто-открываем профиль ОДИН РАЗ
   useEffect(() => {
     if (flow === "NEEDS_PROFILE" && subview == null) {
       setSubview("profile");
@@ -69,20 +70,20 @@ export default function DriverFlow({ API, token, me, year }) {
         token={token}
         me={me}
         initialStep={2}
-        onDoneNext={() => { setSubview("questionnaire"); }} // сразу к опроснику
+        onDoneNext={() => { setSubview("expenses"); }}
       />
     );
   }
 
-  if (subview === "questionnaire") {
+  if (subview === "expenses") {
     return (
-      <DriverQuestionnaire
+      <DriverExpenses
         API={API}
         token={token}
         me={me}
         year={year}
         onBack={() => setSubview("profile")}
-        onDone={() => { setSubview("documents"); }}
+        onDone={() => setSubview("documents")}
       />
     );
   }
