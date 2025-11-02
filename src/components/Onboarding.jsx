@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { listFirms, selectFirm, getPersonal, putPersonal } from "./api";
 
-export default function Onboarding({ API, token, me }) {
+export default function Onboarding({ API, token, me, initialStep=1, onDone }) {
   const [firms, setFirms] = useState([]);
   const [chosen, setChosen] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [step, setStep] = useState(1); // 1 marketplace, 2 profile, 3 done
+  const [step, setStep] = useState(initialStep); // 1 marketplace, 2 profile, 3 done
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -82,6 +82,7 @@ export default function Onboarding({ API, token, me }) {
       )}
 
       {step === 3 && (
+        onDone && onDone(),
         <div className="card">
           <h2>You're all set 🎉</h2>
           <div className="note">Return to your Dashboard to start uploading your documents.</div>
