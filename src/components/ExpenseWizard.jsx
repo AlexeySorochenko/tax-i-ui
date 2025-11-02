@@ -6,8 +6,9 @@ import React, { useEffect, useMemo, useState } from "react";
  *  - items: [{ code, label, amount|null }]
  *  - onSaveOne: (code, amount|null) => Promise|void
  *  - onFinished: () => Promise|void
+ *  - onGoToFirms?: () => void   // <— новая кнопка "Change firm"
  */
-export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished }) {
+export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished, onGoToFirms }) {
   const [step, setStep] = useState(0);
   const [local, setLocal] = useState(() => (items || []).map(x => ({ ...x, tempAmount: x.amount ?? "" })));
   const [answerYes, setAnswerYes] = useState(() => (items || []).map(x => (x.amount != null ? true : null)));
@@ -153,12 +154,22 @@ export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished 
         {hint.example && <div className="hintExample"><b>Example:</b> {hint.example}</div>}
       </div>
 
-      <div className="row spread actions" style={{ marginTop: 16 }}>
-        <button className="secondary" onClick={back} disabled={busy || step === 0}>Back</button>
-        {step + 1 < len
-          ? <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Next"}</button>
-          : <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Finish"}</button>
-        }
+      {/* ---- ДЕЙСТВИЯ: слева — Change firm (если есть), справа — Back/Next/Finish рядом ---- */}
+      <div className="actions">
+        <div className="actions-left">
+          {onGoToFirms && (
+            <button type="button" className="ghost" onClick={onGoToFirms}>
+              Change firm
+            </button>
+          )}
+        </div>
+        <div className="actions-right">
+          <button className="secondary" onClick={back} disabled={busy || step === 0}>Back</button>
+          {step + 1 < len
+            ? <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Next"}</button>
+            : <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Finish"}</button>
+          }
+        </div>
       </div>
 
       <div className="row" style={{ justifyContent:"flex-end", marginTop: 10 }}>
