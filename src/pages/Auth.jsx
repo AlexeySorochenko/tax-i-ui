@@ -1,16 +1,16 @@
 import React, { useState } from "react";
 import { login, register } from "../components/api";
 
-export default function Auth({ API, onLoggedIn }) {
-  const [tab, setTab] = useState("login"); // 'login' | 'register'
+export default function Auth({ API, onLoggedIn, defaultTab = "login", onBack }) {
+  const [tab, setTab] = useState(defaultTab); // 'login' | 'register'
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  // --- Login form ---
+  // Login
   const [lemail, setLEmail] = useState("");
   const [lpass, setLPass] = useState("");
 
-  // --- Register form ---
+  // Register
   const [r, setR] = useState({
     email: "", phone: "", first_name: "", last_name: "", patronymic: "", password: ""
   });
@@ -20,35 +20,37 @@ export default function Auth({ API, onLoggedIn }) {
     try {
       const tok = await login(API, lemail.trim(), lpass);
       onLoggedIn(tok.access_token);
-    } catch (e) {
-      setErr(extractErr(e));
-    } finally { setBusy(false); }
+    } catch (e) { setErr(extractErr(e)); }
+    finally { setBusy(false); }
   };
 
   const doRegister = async () => {
     setErr(""); setBusy(true);
     try {
-      await register(API, r, new URLSearchParams(location.search).get("invite_code") || undefined);
+      const invite = new URLSearchParams(location.search).get("invite_code") || undefined;
+      await register(API, r, invite);
       const tok = await login(API, r.email.trim(), r.password);
       onLoggedIn(tok.access_token);
-    } catch (e) {
-      setErr(extractErr(e));
-    } finally { setBusy(false); }
+    } catch (e) { setErr(extractErr(e)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="grid" style={{ maxWidth: 520, margin: "24px auto" }}>
+    <div className="grid" style={{ maxWidth: 560, margin: "24px auto" }}>
       <div className="card">
-        <div className="tabbar" style={{marginBottom:12}}>
-          <button className={tab==="login"?"active":""} onClick={()=>setTab("login")}>Login</button>
-          <button className={tab==="register"?"active":""} onClick={()=>setTab("register")}>Register</button>
+        <div className="row spread">
+          <div className="tabbar">
+            <button className={tab==="login"?"active":""} onClick={()=>setTab("login")}>Login</button>
+            <button className={tab==="register"?"active":""} onClick={()=>setTab("register")}>Register</button>
+          </div>
+          {onBack && <button className="secondary" onClick={onBack}>Back</button>}
         </div>
 
-        {err && <div className="alert" style={{marginBottom:12, wordBreak:"break-all"}}>{err}</div>}
+        {err && <div className="alert" style={{marginTop:12, wordBreak:"break-all"}}>{err}</div>}
 
         {tab === "login" ? (
           <>
-            <div className="kv">
+            <div className="kv" style={{marginTop:12}}>
               <div className="k">Email</div>
               <input type="email" placeholder="name@example.com" value={lemail} onChange={e=>setLEmail(e.target.value)} />
               <div className="k">Password</div>
@@ -60,7 +62,7 @@ export default function Auth({ API, onLoggedIn }) {
           </>
         ) : (
           <>
-            <div className="kv">
+            <div className="kv" style={{marginTop:12}}>
               <div className="k">Email</div>
               <input type="email" value={r.email} onChange={e=>setR(s=>({...s, email:e.target.value}))} placeholder="name@example.com" />
               <div className="k">Phone</div>
@@ -75,14 +77,12 @@ export default function Auth({ API, onLoggedIn }) {
               <input type="password" value={r.password} onChange={e=>setR(s=>({...s, password:e.target.value}))} />
             </div>
             <div className="row" style={{justifyContent:"flex-end", marginTop:12}}>
-              <button onClick={doRegister} disabled={busy || !r.email || !r.password}>{busy ? "Creating…" : "Create account"}</button>
+              <button onClick={doRegister} disabled={busy || !r.email || !r.password}>
+                {busy ? "Creating…" : "Create account"}
+              </button>
             </div>
           </>
         )}
-
-        <div className="note" style={{marginTop:12}}>
-          API: {API}
-        </div>
       </div>
     </div>
   );
