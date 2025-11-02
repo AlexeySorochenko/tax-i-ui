@@ -4,24 +4,22 @@ import { listFirms, selectFirm, getPersonal, putPersonal } from "./api";
 /**
  * Онбординг:
  * 1) выбор фирмы
- * 2) профиль — показываем только поля, которых не было в регистрации:
+ * 2) профиль — спрашиваем только недостающие поля:
  *    ssn, date_of_birth, mailing_address, marital_status
- * 3) done
+ * 3) done → вызываем onDoneNext() чтобы перейти к визарду расходов
  */
-export default function Onboarding({ API, token, me, initialStep = 1, onDone }) {
+export default function Onboarding({ API, token, me, initialStep = 1, onDoneNext }) {
   const [firms, setFirms] = useState([]);
   const [profile, setProfile] = useState({});
-  const [step, setStep] = useState(initialStep); // 1 marketplace, 2 profile, 3 done
+  const [step, setStep] = useState(initialStep);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
   useEffect(() => {
     let alive = true;
-    // Фирмы нужны только если мы реально на шаге 1
     if (initialStep === 1) {
       listFirms(API, token).then((x)=>{ if (alive) setFirms(x||[]); }).catch(()=>{});
     }
-    // Загружаем персональный профиль (если уже есть — предзаполним)
     getPersonal(API, token, me.id)
       .then((p)=>{ if (alive) setProfile(p || {}); })
       .catch(()=>{});
@@ -41,7 +39,6 @@ export default function Onboarding({ API, token, me, initialStep = 1, onDone }) 
   const saveProfile = async () => {
     setBusy(true); setErr("");
     try {
-      // Отправляем только заполняемые здесь поля (без first_name/last_name/phone)
       const payload = {
         ssn: profile?.ssn || "",
         date_of_birth: profile?.date_of_birth || "",
@@ -50,7 +47,7 @@ export default function Onboarding({ API, token, me, initialStep = 1, onDone }) 
       };
       await putPersonal(API, token, me.id, payload);
       setStep(3);
-      onDone && onDone();
+      onDoneNext && onDoneNext(); // ← сразу к визарду расходов
     } catch (e) { setErr(String(e)); }
     finally { setBusy(false); }
   };
@@ -83,7 +80,6 @@ export default function Onboarding({ API, token, me, initialStep = 1, onDone }) 
           </div>
 
           <div className="kv" style={{marginTop:12}}>
-            {/* Этих полей не было в регистрации — показываем всегда */}
             <div className="k">SSN</div>
             <input
               placeholder="123456789 (or last 4)"
