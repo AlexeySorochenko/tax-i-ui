@@ -1,6 +1,5 @@
-// Lightweight HTTP helpers + auth API
+// ==== HTTP helpers & API ====
 
-// ---------- common ----------
 export function authHeaders(token, extra = {}) {
   return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
 }
@@ -47,18 +46,29 @@ export async function formPost(url, token, formData) {
   return safeJson(r);
 }
 
-// ---------- auth ----------
+// ---- auth ----
 export async function fetchMe(API, token) {
   const r = await fetch(`${API}/auth/me`, { headers: authHeaders(token) });
   if (!r.ok) throw new Error(errorText(await safeJson(r)));
-  return safeJson(r); // { id, email, name, role }
+  return safeJson(r); // { id, email, name, role } (name может быть собран на бэке)
 }
 
-export async function register(API, { email, name, password, role = "driver" }) {
+// ВАЖНО: регистрируем по новой схеме (first_name, last_name, patronymic, phone)
+export async function register(API, payload) {
+  // payload: { email, phone, first_name, last_name, patronymic, password, role? }
+  const body = {
+    email: payload.email,
+    phone: payload.phone,
+    first_name: payload.first_name,
+    last_name: payload.last_name,
+    patronymic: payload.patronymic,
+    password: payload.password,
+    role: payload.role || "driver",
+  };
   const r = await fetch(`${API}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, name, password, role }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r); // created user
@@ -75,21 +85,4 @@ export async function login(API, { email, password }) {
   });
   if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r); // { access_token, token_type }
-}
-
-// ---------- (если дальше используешь) ----------
-export async function periodStatus(API, token, userId, year) {
-  return jget(`${API}/api/v1/periods/status/${userId}/${year}`, token);
-}
-export async function listFirms(API, token) {
-  return jget(`${API}/api/v1/firms`, token);
-}
-export async function selectFirm(API, token, firmId) {
-  return jpost(`${API}/api/v1/firms/select/${firmId}`, token);
-}
-export async function getExpenses(API, token, businessProfileId, year) {
-  return jget(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`, token);
-}
-export async function saveExpenses(API, token, businessProfileId, year, expensesArray) {
-  return jpost(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`, token, { expenses: expensesArray });
 }
