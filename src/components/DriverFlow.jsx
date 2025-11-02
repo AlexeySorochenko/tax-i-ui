@@ -1,325 +1,168 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  listFirms, selectFirm,
-  getExpenses, saveExpenses,
-  listBusinessProfiles, createBusinessProfile,
-  uploadDoc, docsByDriver,
-  periodStatus, submitPaymentStub
-} from "./api";
-import ExpenseWizard from "./ExpenseWizard";
+  fetchMe, periodStatus, listFirms, selectFirm,
+  getExpenses, saveExpenses
+} from "../components/api";
+import ExpenseWizard from "../components/ExpenseWizard";
 
-export default function DriverFlow({ API, token, me, year }) {
+export default function DriverFlow({ API, token, year }) {
+  const [me, setMe] = useState(null);
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [overrideView, setOverrideView] = useState(null); // 'firms' | null
 
-  const [firms, setFirms] = useState([]);
-  const [selectedFirm, setSelectedFirm] = useState(null);
-
-  const [expenses, setExpenses] = useState([]);
-  const [bpId, setBpId] = useState(null);
-
-  const [docs, setDocs] = useState([]);
-  const [busyDoc, setBusyDoc] = useState({});
-  const fileInputs = useRef({});
-
-  const refreshStatus = async () => {
+  // --- bootstrap
+  const loadAll = async () => {
+    setLoading(true); setError("");
     try {
-      setLoading(true);
-      const s = await periodStatus(API, token, me.id, year);
-      setStatus(s);
-      setError("");
+      const u = await fetchMe(API, token);
+      setMe(u);
+      const st = await periodStatus(API, token, u.id, year);
+      setStatus(st);
     } catch (e) {
-      setError(readErr(e));
+      setError(String(e?.message || e));
     } finally {
       setLoading(false);
     }
   };
-  useEffect(() => { refreshStatus(); /* eslint-disable-next-line */ }, [year]);
 
-  // NEEDS_FIRM
-  useEffect(() => {
-    if (status?.flow_state === "NEEDS_FIRM") {
-      listFirms(API, token).then(setFirms).catch(() => setFirms([]));
-    }
-  }, [status?.flow_state]);
-  const confirmFirm = async () => {
-    if (!selectedFirm) return;
-    await selectFirm(API, token, selectedFirm);
-    await refreshStatus();
+  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [API, token, year]);
+
+  // --- Firms view (override or flow_state)
+  const [firms, setFirms] = useState([]);
+  const loadFirms = async () => {
+    try { setFirms(await listFirms(API, token)); }
+    catch (e) { setError(String(e?.message || e)); }
   };
 
-  // NEEDS_PROFILE (интервью)
-  const bootstrapInterview = async () => {
+  const chooseFirm = async (firmId) => {
     try {
-      const list = await listBusinessProfiles(API, token, me.id).catch(() => []);
-      let useId = list?.[0]?.id || null;
-      if (!useId) {
-        const created = await createBusinessProfile(API, token, {
-          name: "Taxi business", business_code: "485310", ein: ""
-        }).catch(() => null);
-        useId = created?.id || null;
-      }
-      setBpId(useId);
-      const ex = useId ? await getExpenses(API, token, useId, year).catch(() => []) : [];
-      setExpenses(ex || []);
-    } catch { setExpenses([]); }
+      await selectFirm(API, token, firmId);
+      setOverrideView(null);
+      await loadAll(); // рефрешим flow_state
+    } catch (e) { setError(String(e?.message || e)); }
   };
-  useEffect(() => { if (status?.flow_state === "NEEDS_PROFILE") bootstrapInterview(); }, [status?.flow_state]);
+
+  // --- Expenses
+  const [exp, setExp] = useState({ businessProfileId: null, items: [] });
+
+  const startExpenses = async (businessProfileId) => {
+    const data = await getExpenses(API, token, businessProfileId, year);
+    setExp({ businessProfileId, items: data || [] });
+  };
 
   const saveOneExpense = async (code, amount) => {
-    const next = expenses.map(e => e.code === code ? { ...e, amount } : e);
-    setExpenses(next);
-    if (bpId) await saveExpenses(API, token, bpId, year, next.filter(x => x.amount != null));
-  };
-  const finishInterview = async () => { await refreshStatus(); };
-
-  // NEEDS_DOCUMENTS / NEEDS_PAYMENT
-  const refreshDocs = async () => { setDocs(await docsByDriver(API, token, me.id).catch(() => [])); };
-  useEffect(() => {
-    if (["NEEDS_DOCUMENTS","NEEDS_PAYMENT"].includes(status?.flow_state)) refreshDocs();
-    // eslint-disable-next-line
-  }, [status?.flow_state]);
-
-  const onPick = async (code, file) => {
-    if (!file) return;
-    setBusyDoc(m => ({ ...m, [code]: true }));
-    try {
-      await uploadDoc(API, token, me.id, year, code, file);
-      await refreshStatus();
-      await refreshDocs();
-    } catch (e) { alert(readErr(e)); }
-    finally {
-      setBusyDoc(m => ({ ...m, [code]: false }));
-      if (fileInputs.current[code]) fileInputs.current[code].value = "";
-    }
+    const next = exp.items.map(x => (x.code === code ? { ...x, amount } : x));
+    setExp({ ...exp, items: next });
+    // батчим по одному элементу — бэкенд принимает subset
+    const payload = [{ code, amount }];
+    await saveExpenses(API, token, exp.businessProfileId, year, payload);
   };
 
-  const canSubmit = useMemo(() => {
-    const items = status?.checklist || [];
-    return items.length > 0 && !items.some(x => x.status === "missing");
-  }, [status]);
-  const submitAll = async () => { await submitPaymentStub(API, token, year); await refreshStatus(); };
+  const finishExpenses = async () => {
+    await saveExpenses(API, token, exp.businessProfileId, year,
+      exp.items.filter(x => x.amount != null).map(x => ({ code: x.code, amount: x.amount }))
+    );
+    await loadAll();
+  };
 
-  if (loading && !status) return (<div className="grid"><div className="card"><div className="note">Loading…</div></div></div>);
-  if (error) return (<div className="grid"><div className="card"><div className="alert">Error: {error}</div></div></div>);
+  // ---- RENDER ----
+  if (loading) return <div className="card"><div className="note">Loading…</div></div>;
+  if (error)   return <div className="card"><div className="alert">{error}</div></div>;
+  if (!me)     return null;
+
+  // явный возврат к выбору фирмы
+  if (overrideView === "firms") {
+    return <FirmsPicker
+      firms={firms}
+      onLoad={loadFirms}
+      onChoose={chooseFirm}
+    />;
+  }
 
   const flow = status?.flow_state;
 
-  // ================== NEEDS_FIRM (one column + price + rating) ==================
+  // 1) Нужно выбрать фирму
   if (flow === "NEEDS_FIRM") {
+    return <FirmsPicker
+      firms={firms}
+      onLoad={loadFirms}
+      onChoose={chooseFirm}
+    />;
+  }
+
+  // 2) Нужно заполнить опрос / расходы
+  if (flow === "NEEDS_PROFILE" || flow === "NEEDS_EXPENSES" || exp.items.length) {
+    // если ещё не загрузили список расходов — попробуем стартануть
+    if (!exp.items.length && status?.business_profile_id) {
+      startExpenses(status.business_profile_id);
+      return <div className="card"><div className="note">Loading interview…</div></div>;
+    }
     return (
-      <div className="grid">
-        <div className="card">
-          <h2>Choose your accounting firm</h2>
-          <div className="note" style={{marginTop:6}}>Pick a firm to get started.</div>
-
-          <div className="tilegrid market" style={{marginTop:12}}>
-            {(firms || []).map(f => {
-              const price = formatPrice(f.services_pricing);
-              const rating = f.avg_rating ?? null;
-              return (
-                <button
-                  key={f.id}
-                  className={`tile ${selectedFirm===f.id ? "selected" : ""}`}
-                  onClick={()=>setSelectedFirm(f.id)}
-                  style={{textAlign:"left"}}
-                >
-                  <div style={{flex:1, minWidth:0}}>
-                    <div className="row" style={{justifyContent:"space-between", alignItems:"baseline"}}>
-                      <b style={{fontSize:16, lineHeight:1.2}}>{f.name}</b>
-                      <div className="row" style={{gap:10}}>
-                        {price && <span className="price">{price}</span>}
-                        {rating != null && <RatingBadge value={rating} />}
-                      </div>
-                    </div>
-                    <div className="note" style={{marginTop:4}}>{f.description || "—"}</div>
-                  </div>
-                  <span className="badge">{selectedFirm===f.id ? "Selected" : "Choose"}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="row" style={{justifyContent:"flex-end", marginTop:12}}>
-            <button onClick={confirmFirm} disabled={!selectedFirm}>Continue</button>
-          </div>
-        </div>
-      </div>
+      <ExpenseWizard
+        year={year}
+        items={exp.items}
+        onSaveOne={saveOneExpense}
+        onFinished={finishExpenses}
+        onGoToFirms={() => { setOverrideView("firms"); loadFirms(); }} // <— кнопка внизу визарда
+      />
     );
   }
 
-  // ================== NEEDS_PROFILE ==================
-  if (flow === "NEEDS_PROFILE") {
-    return (
-      <div className="grid">
-        <ExpenseWizard
-          year={year}
-          items={expenses}
-          onSaveOne={saveOneExpense}
-          onFinished={finishInterview}
-        />
+  // 3) Документы / оплата / ревью — здесь может быть твой текущий рендер
+  return (
+    <div className="card">
+      <h2>Next steps</h2>
+      <div className="note">Flow state: <b>{flow || "unknown"}</b></div>
+      <div className="section">
+        <button className="secondary" onClick={() => { setOverrideView("firms"); loadFirms(); }}>
+          Change firm
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  // ================== NEEDS_DOCUMENTS / NEEDS_PAYMENT ==================
-  if (flow === "NEEDS_DOCUMENTS" || flow === "NEEDS_PAYMENT") {
-    return (
-      <div className="grid">
-        <div className="card">
-          <h2>My dashboard</h2>
-          <div className="kv">
-            <div className="k">Year</div><div><span className="badge">{year}</span></div>
-            <div className="k">Stage</div><div><span className="badge">{status?.stage || "—"}</span></div>
-            <div className="k">Period ID</div><div>{status?.period_id ?? "—"}</div>
-          </div>
-        </div>
+/** ───────── Sub: Firms picker ───────── **/
+function FirmsPicker({ firms, onLoad, onChoose }) {
+  useEffect(() => { onLoad?.(); }, [onLoad]);
 
-        <Checklist list={status?.checklist || []} busy={busyDoc} onPick={onPick} fileInputs={fileInputs} />
-
-        <div className="card">
-          <div className="row spread">
-            <div className="note">
-              {flow === "NEEDS_PAYMENT"
-                ? "All set. Send your files to the accountant."
-                : "Upload required documents to continue."}
+  return (
+    <div className="card">
+      <h2>Choose your accounting firm</h2>
+      <div className="grid firmgrid">
+        {(firms || []).map(f => (
+          <div key={f.id} className="tile firm">
+            <div className="firmBody">
+              <div className="firmTop">
+                <div className="firmName">{f.name}</div>
+                {(f.avg_rating != null) && <div className="rating">★ {Number(f.avg_rating).toFixed(1)}</div>}
+              </div>
+              <div className="firmDescr">{f.description}</div>
+              <div className="firmPrice">{formatPrice(f.services_pricing)}</div>
             </div>
-            {flow === "NEEDS_PAYMENT" && (
-              <button disabled={!canSubmit} onClick={submitAll}>Finish & submit</button>
-            )}
+            <div className="firmAct">
+              <button className="primary" onClick={() => onChoose?.(f.id)}>Choose</button>
+            </div>
           </div>
-        </div>
-
-        <Uploads docs={docs} />
+        ))}
       </div>
-    );
-  }
-
-  // ================== IN_REVIEW ==================
-  if (flow === "IN_REVIEW") {
-    return (
-      <div className="grid">
-        <div className="card">
-          <h2>Status</h2>
-          <div className="row spread" style={{ marginTop: 6 }}>
-            <div className="note">Submitted. Your accountant is reviewing your documents.</div>
-            <span className="badge ok">In review</span>
-          </div>
-        </div>
-
-        <Checklist list={status?.checklist || []} busy={{}} onPick={()=>{}} fileInputs={{ current: {} }} />
-        {/* Тут можно подключить ChatPanel */}
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid">
-      <div className="card"><h2>My dashboard</h2><div className="note">Waiting for instructions…</div></div>
     </div>
   );
 }
 
-/* ---------------- UI blocks ---------------- */
-
-const STATUS_PILL = {
-  missing: "badge",
-  uploaded: "badge warn",
-  needs_review: "badge warn",
-  approved: "badge ok",
-  rejected: "badge err",
-};
-
-function Checklist({ list, busy, onPick, fileInputs }) {
-  return (
-    <div className="card">
-      <h3>Checklist</h3>
-      <table>
-        <thead><tr><th>Task</th><th>Status</th><th style={{width:140}}>Action</th></tr></thead>
-        <tbody>
-          {(list||[]).map((it,i)=>(
-            <tr key={i}>
-              <td>{it.document}</td>
-              <td><span className={STATUS_PILL[it.status] || "badge"}>{it.status}</span></td>
-              <td>
-                <label className="secondary">
-                  <input
-                    type="file"
-                    accept="image/*,application/pdf"
-                    ref={el => { fileInputs.current[it.document] = el; }}
-                    onChange={(e)=>onPick(it.document, e.target.files?.[0])}
-                    capture="environment"
-                  />
-                  {busy[it.document] ? "Uploading…" : "Upload"}
-                </label>
-              </td>
-            </tr>
-          ))}
-          {(!list || !list.length) && (
-            <tr><td colSpan={3}><div className="note">No tasks yet.</div></td></tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function Uploads({ docs }) {
-  return (
-    <div className="card">
-      <h3>My uploads</h3>
-      {!docs?.length && <div className="note">No documents yet.</div>}
-      {docs?.map(d=>(
-        <div key={d.id} className="tile">
-          <div className="row" style={{gap:8}}>
-            <span className="badge">{d.doc_type || "UNKNOWN"}</span>
-            <b>{d.filename}</b>
-          </div>
-          <div className="rightChip note">
-            {d.stored_filename ? <a href={d.stored_filename} target="_blank">Open</a> : "—"}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* ---------------- helpers ---------------- */
-
-function readErr(e){ try{const j=JSON.parse(String(e.message||e));return j.detail||e.message;}catch{return String(e.message||e);} }
-
-// f.services_pricing может быть "1000", 1000, или JSON-строка {"standard":250}
-function formatPrice(raw){
-  if (raw == null) return null;
+function formatPrice(sp) {
+  // server may return "1000" or '{"standard":250}'
+  if (!sp) return "";
   try {
-    if (typeof raw === "number") return `$${raw}`;
-    if (typeof raw === "string") {
-      const t = raw.trim();
-      // число строкой
-      if (/^\d+(\.\d+)?$/.test(t)) return `$${t}`;
-      // JSON-объект
-      const obj = JSON.parse(t);
-      const val = obj.standard ?? obj.flat_rate ?? obj.premium ?? obj.hourly ?? Object.values(obj)[0];
-      return val != null ? `$${val}` : null;
-    }
-    if (typeof raw === "object") {
-      const val = raw.standard ?? raw.flat_rate ?? raw.premium ?? raw.hourly ?? Object.values(raw)[0];
-      return val != null ? `$${val}` : null;
-    }
+    const num = Number(sp);
+    if (Number.isFinite(num)) return `$${num}`;
   } catch {}
-  return null;
-}
-
-function RatingBadge({ value }) {
-  const v = Math.max(0, Math.min(5, Number(value)||0));
-  const full = Math.floor(v);
-  const half = v - full >= 0.5;
-  const empty = 5 - full - (half ? 1 : 0);
-  return (
-    <span className="rating">
-      {"★".repeat(full)}{half ? "☆" : ""}{"✩".repeat(empty)}
-      <span className="ratingNum">{v.toFixed(1)}</span>
-    </span>
-  );
+  try {
+    const obj = JSON.parse(sp);
+    const [k, v] = Object.entries(obj)[0] || [];
+    if (v != null) return `${k}: $${v}`;
+  } catch {}
+  return String(sp);
 }
