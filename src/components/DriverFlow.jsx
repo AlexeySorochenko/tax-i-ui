@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { periodStatus, listFirms, selectFirm } from "../components/api";
 import Onboarding from "./Onboarding";
 import DriverSelf from "./DriverSelf";
+import DriverQuestionnaire from "./DriverQuestionnaire";
 
 /**
  * Экран водителя по состоянию флоу из /periods/status:
@@ -16,7 +17,7 @@ export default function DriverFlow({ API, token, me, year }) {
   const [flow, setFlow] = useState(null);
   const [err, setErr] = useState("");
   const [firms, setFirms] = useState([]);
-  const [subview, setSubview] = useState(null); // "profile" | "documents" | "chat" | null
+  const [subview, setSubview] = useState(null); // "profile" | "questionnaire" | "documents" | "chat" | null
 
   async function refresh() {
     setLoading(true);
@@ -44,9 +45,9 @@ export default function DriverFlow({ API, token, me, year }) {
     // eslint-disable-next-line
   }, [flow]);
 
-  // Авто-открываем форму профиля, как только бэкенд вернул NEEDS_PROFILE
+  // Авто-открываем форму профиля ОДИН РАЗ
   useEffect(() => {
-    if (flow === "NEEDS_PROFILE" && subview !== "profile") {
+    if (flow === "NEEDS_PROFILE" && subview == null) {
       setSubview("profile");
     }
   }, [flow, subview]);
@@ -54,7 +55,7 @@ export default function DriverFlow({ API, token, me, year }) {
   async function choose(firmId) {
     try {
       await selectFirm(API, token, firmId);
-      await refresh();                // бэкенд переключит на NEEDS_PROFILE → выше откроется форма
+      await refresh(); // бэкенд переключит на NEEDS_PROFILE → выше откроется форма (один раз)
     } catch (e) {
       alert(String(e?.message || e));
     }
@@ -68,7 +69,20 @@ export default function DriverFlow({ API, token, me, year }) {
         token={token}
         me={me}
         initialStep={2}
-        onDone={() => { setSubview(null); refresh(); }}
+        onDoneNext={() => { setSubview("questionnaire"); }} // сразу к опроснику
+      />
+    );
+  }
+
+  if (subview === "questionnaire") {
+    return (
+      <DriverQuestionnaire
+        API={API}
+        token={token}
+        me={me}
+        year={year}
+        onBack={() => setSubview("profile")}
+        onDone={() => { setSubview("documents"); }}
       />
     );
   }
