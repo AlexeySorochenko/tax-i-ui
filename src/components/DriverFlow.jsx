@@ -7,36 +7,22 @@ import {
   periodStatus, submitPaymentStub
 } from "./api";
 import ExpenseWizard from "./ExpenseWizard";
-// import ChatPanel from "./ChatPanel"; // подключи, если уже есть чат
 
-/**
- * Новый упрощённый поток: весь роутинг по экранам идёт от flow_state,
- * который приходит из /api/v1/periods/status/{user_id}/{year}.
- *
- * flow_state:
- *  - NEEDS_FIRM       → экран выбора фирмы
- *  - NEEDS_PROFILE    → интервью по расходам (бэкенд создает/подскажет бизнес-профиль)
- *  - NEEDS_DOCUMENTS  → чек-лист без кнопки submit
- *  - NEEDS_PAYMENT    → чек-лист + кнопка Finish & submit
- *  - IN_REVIEW        → статус «В работе» (+ чат)
- */
 export default function DriverFlow({ API, token, me, year }) {
-  const [status, setStatus] = useState(null);          // { flow_state, period_id, stage, checklist, ... }
+  const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // данные для разных экранов
   const [firms, setFirms] = useState([]);
   const [selectedFirm, setSelectedFirm] = useState(null);
 
-  const [expenses, setExpenses] = useState([]);        // [{code,label,amount}]
-  const [bpId, setBpId] = useState(null);              // выбранный/созданный бизнес-профиль
+  const [expenses, setExpenses] = useState([]);
+  const [bpId, setBpId] = useState(null);
 
   const [docs, setDocs] = useState([]);
   const [busyDoc, setBusyDoc] = useState({});
   const fileInputs = useRef({});
 
-  // ---- общий refresh статуса ----
   const refreshStatus = async () => {
     try {
       setLoading(true);
@@ -49,81 +35,50 @@ export default function DriverFlow({ API, token, me, year }) {
       setLoading(false);
     }
   };
-
   useEffect(() => { refreshStatus(); /* eslint-disable-next-line */ }, [year]);
 
-  // ====== NEEDS_FIRM =======================================================
+  // NEEDS_FIRM
   useEffect(() => {
     if (status?.flow_state === "NEEDS_FIRM") {
       listFirms(API, token).then(setFirms).catch(() => setFirms([]));
     }
   }, [status?.flow_state]);
-
   const confirmFirm = async () => {
     if (!selectedFirm) return;
     await selectFirm(API, token, selectedFirm);
-    await refreshStatus(); // бэкенд переведёт в следующий flow_state
+    await refreshStatus();
   };
 
-  // ====== NEEDS_PROFILE (интервью) ========================================
-  // тут бэкенд сам решает, какой бизнес-профиль использовать;
-  // мы подстрахуемся: возьмём первый; если нет — создадим "Taxi business".
+  // NEEDS_PROFILE (интервью)
   const bootstrapInterview = async () => {
     try {
       const list = await listBusinessProfiles(API, token, me.id).catch(() => []);
       let useId = list?.[0]?.id || null;
       if (!useId) {
         const created = await createBusinessProfile(API, token, {
-          name: "Taxi business",
-          business_code: "485310",
-          ein: ""
+          name: "Taxi business", business_code: "485310", ein: ""
         }).catch(() => null);
         useId = created?.id || null;
       }
       setBpId(useId);
-      if (useId) {
-        const ex = await getExpenses(API, token, useId, year).catch(() => []);
-        setExpenses(ex || []);
-      } else {
-        setExpenses([]);
-      }
-    } catch {
-      setExpenses([]);
-    }
+      const ex = useId ? await getExpenses(API, token, useId, year).catch(() => []) : [];
+      setExpenses(ex || []);
+    } catch { setExpenses([]); }
   };
-
-  useEffect(() => {
-    if (status?.flow_state === "NEEDS_PROFILE") {
-      bootstrapInterview();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.flow_state]);
+  useEffect(() => { if (status?.flow_state === "NEEDS_PROFILE") bootstrapInterview(); }, [status?.flow_state]);
 
   const saveOneExpense = async (code, amount) => {
     const next = expenses.map(e => e.code === code ? { ...e, amount } : e);
     setExpenses(next);
-    if (bpId) {
-      // отправляем только заполненные
-      await saveExpenses(API, token, bpId, year, next.filter(x => x.amount != null));
-    }
+    if (bpId) await saveExpenses(API, token, bpId, year, next.filter(x => x.amount != null));
   };
+  const finishInterview = async () => { await refreshStatus(); };
 
-  const finishInterview = async () => {
-    // после завершения просто рефрешим статус — бэкенд решает, что дальше
-    await refreshStatus();
-  };
-
-  // ====== NEEDS_DOCUMENTS / NEEDS_PAYMENT =================================
-  const refreshDocs = async () => {
-    const d = await docsByDriver(API, token, me.id).catch(() => []);
-    setDocs(d);
-  };
-
+  // NEEDS_DOCUMENTS / NEEDS_PAYMENT
+  const refreshDocs = async () => { setDocs(await docsByDriver(API, token, me.id).catch(() => [])); };
   useEffect(() => {
-    if (status?.flow_state === "NEEDS_DOCUMENTS" || status?.flow_state === "NEEDS_PAYMENT") {
-      refreshDocs();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (["NEEDS_DOCUMENTS","NEEDS_PAYMENT"].includes(status?.flow_state)) refreshDocs();
+    // eslint-disable-next-line
   }, [status?.flow_state]);
 
   const onPick = async (code, file) => {
@@ -131,11 +86,10 @@ export default function DriverFlow({ API, token, me, year }) {
     setBusyDoc(m => ({ ...m, [code]: true }));
     try {
       await uploadDoc(API, token, me.id, year, code, file);
-      await refreshStatus(); // чек-лист обновится с сервера
+      await refreshStatus();
       await refreshDocs();
-    } catch (e) {
-      alert(readErr(e));
-    } finally {
+    } catch (e) { alert(readErr(e)); }
+    finally {
       setBusyDoc(m => ({ ...m, [code]: false }));
       if (fileInputs.current[code]) fileInputs.current[code].value = "";
     }
@@ -145,48 +99,49 @@ export default function DriverFlow({ API, token, me, year }) {
     const items = status?.checklist || [];
     return items.length > 0 && !items.some(x => x.status === "missing");
   }, [status]);
+  const submitAll = async () => { await submitPaymentStub(API, token, year); await refreshStatus(); };
 
-  const submitAll = async () => {
-    await submitPaymentStub(API, token, year);
-    await refreshStatus(); // ожидаем переход в IN_REVIEW
-  };
-
-  // ========================================================================
-  //                                  RENDER
-  // ========================================================================
-  if (loading && !status) {
-    return (<div className="grid"><div className="card"><div className="note">Loading…</div></div></div>);
-  }
-  if (error) {
-    return (<div className="grid"><div className="card"><div className="alert">Error: {error}</div></div></div>);
-  }
+  if (loading && !status) return (<div className="grid"><div className="card"><div className="note">Loading…</div></div></div>);
+  if (error) return (<div className="grid"><div className="card"><div className="alert">Error: {error}</div></div></div>);
 
   const flow = status?.flow_state;
 
-  // --- NEEDS_FIRM ---
+  // ================== NEEDS_FIRM (one column + price + rating) ==================
   if (flow === "NEEDS_FIRM") {
     return (
       <div className="grid">
         <div className="card">
           <h2>Choose your accounting firm</h2>
-          <div className="note" style={{ marginTop: 6 }}>Pick a firm to get started.</div>
-          <div className="tilegrid" style={{ marginTop: 12 }}>
-            {(firms || []).map(f => (
-              <button
-                key={f.id}
-                className={`tile ${selectedFirm === f.id ? "selected" : ""}`}
-                onClick={() => setSelectedFirm(f.id)}
-                style={{ textAlign: "left" }}
-              >
-                <div>
-                  <b>{f.name}</b>
-                  <div className="note">{f.description || "—"}</div>
-                </div>
-                <span className="badge">{selectedFirm === f.id ? "Selected" : "Choose"}</span>
-              </button>
-            ))}
+          <div className="note" style={{marginTop:6}}>Pick a firm to get started.</div>
+
+          <div className="tilegrid market" style={{marginTop:12}}>
+            {(firms || []).map(f => {
+              const price = formatPrice(f.services_pricing);
+              const rating = f.avg_rating ?? null;
+              return (
+                <button
+                  key={f.id}
+                  className={`tile ${selectedFirm===f.id ? "selected" : ""}`}
+                  onClick={()=>setSelectedFirm(f.id)}
+                  style={{textAlign:"left"}}
+                >
+                  <div style={{flex:1, minWidth:0}}>
+                    <div className="row" style={{justifyContent:"space-between", alignItems:"baseline"}}>
+                      <b style={{fontSize:16, lineHeight:1.2}}>{f.name}</b>
+                      <div className="row" style={{gap:10}}>
+                        {price && <span className="price">{price}</span>}
+                        {rating != null && <RatingBadge value={rating} />}
+                      </div>
+                    </div>
+                    <div className="note" style={{marginTop:4}}>{f.description || "—"}</div>
+                  </div>
+                  <span className="badge">{selectedFirm===f.id ? "Selected" : "Choose"}</span>
+                </button>
+              );
+            })}
           </div>
-          <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+
+          <div className="row" style={{justifyContent:"flex-end", marginTop:12}}>
             <button onClick={confirmFirm} disabled={!selectedFirm}>Continue</button>
           </div>
         </div>
@@ -194,7 +149,7 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
-  // --- NEEDS_PROFILE ---
+  // ================== NEEDS_PROFILE ==================
   if (flow === "NEEDS_PROFILE") {
     return (
       <div className="grid">
@@ -208,7 +163,7 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
-  // --- NEEDS_DOCUMENTS / NEEDS_PAYMENT ---
+  // ================== NEEDS_DOCUMENTS / NEEDS_PAYMENT ==================
   if (flow === "NEEDS_DOCUMENTS" || flow === "NEEDS_PAYMENT") {
     return (
       <div className="grid">
@@ -221,12 +176,7 @@ export default function DriverFlow({ API, token, me, year }) {
           </div>
         </div>
 
-        <Checklist
-          list={status?.checklist || []}
-          busy={busyDoc}
-          onPick={onPick}
-          fileInputs={fileInputs}
-        />
+        <Checklist list={status?.checklist || []} busy={busyDoc} onPick={onPick} fileInputs={fileInputs} />
 
         <div className="card">
           <div className="row spread">
@@ -246,7 +196,7 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
-  // --- IN_REVIEW ---
+  // ================== IN_REVIEW ==================
   if (flow === "IN_REVIEW") {
     return (
       <div className="grid">
@@ -258,30 +208,20 @@ export default function DriverFlow({ API, token, me, year }) {
           </div>
         </div>
 
-        <Checklist
-          list={status?.checklist || []}
-          busy={{}}
-          onPick={() => {}}
-          fileInputs={{ current: {} }}
-        />
-
-        {/* <ChatPanel API={API} token={token} driverId={me.id} myUserId={me.id} /> */}
+        <Checklist list={status?.checklist || []} busy={{}} onPick={()=>{}} fileInputs={{ current: {} }} />
+        {/* Тут можно подключить ChatPanel */}
       </div>
     );
   }
 
-  // fallback
   return (
     <div className="grid">
-      <div className="card">
-        <h2>My dashboard</h2>
-        <div className="note">Waiting for instructions…</div>
-      </div>
+      <div className="card"><h2>My dashboard</h2><div className="note">Waiting for instructions…</div></div>
     </div>
   );
 }
 
-/* -------------------- Checklist / Uploads --------------------- */
+/* ---------------- UI blocks ---------------- */
 
 const STATUS_PILL = {
   missing: "badge",
@@ -296,11 +236,9 @@ function Checklist({ list, busy, onPick, fileInputs }) {
     <div className="card">
       <h3>Checklist</h3>
       <table>
-        <thead>
-          <tr><th>Task</th><th>Status</th><th style={{ width: 140 }}>Action</th></tr>
-        </thead>
+        <thead><tr><th>Task</th><th>Status</th><th style={{width:140}}>Action</th></tr></thead>
         <tbody>
-          {(list || []).map((it, i) => (
+          {(list||[]).map((it,i)=>(
             <tr key={i}>
               <td>{it.document}</td>
               <td><span className={STATUS_PILL[it.status] || "badge"}>{it.status}</span></td>
@@ -310,7 +248,7 @@ function Checklist({ list, busy, onPick, fileInputs }) {
                     type="file"
                     accept="image/*,application/pdf"
                     ref={el => { fileInputs.current[it.document] = el; }}
-                    onChange={(e) => onPick(it.document, e.target.files?.[0])}
+                    onChange={(e)=>onPick(it.document, e.target.files?.[0])}
                     capture="environment"
                   />
                   {busy[it.document] ? "Uploading…" : "Upload"}
@@ -332,9 +270,9 @@ function Uploads({ docs }) {
     <div className="card">
       <h3>My uploads</h3>
       {!docs?.length && <div className="note">No documents yet.</div>}
-      {docs?.map(d => (
+      {docs?.map(d=>(
         <div key={d.id} className="tile">
-          <div className="row" style={{ gap: 8 }}>
+          <div className="row" style={{gap:8}}>
             <span className="badge">{d.doc_type || "UNKNOWN"}</span>
             <b>{d.filename}</b>
           </div>
@@ -347,7 +285,41 @@ function Uploads({ docs }) {
   );
 }
 
-function readErr(e) {
-  try { const j = JSON.parse(String(e.message || e)); return j.detail || e.message; }
-  catch { return String(e.message || e); }
+/* ---------------- helpers ---------------- */
+
+function readErr(e){ try{const j=JSON.parse(String(e.message||e));return j.detail||e.message;}catch{return String(e.message||e);} }
+
+// f.services_pricing может быть "1000", 1000, или JSON-строка {"standard":250}
+function formatPrice(raw){
+  if (raw == null) return null;
+  try {
+    if (typeof raw === "number") return `$${raw}`;
+    if (typeof raw === "string") {
+      const t = raw.trim();
+      // число строкой
+      if (/^\d+(\.\d+)?$/.test(t)) return `$${t}`;
+      // JSON-объект
+      const obj = JSON.parse(t);
+      const val = obj.standard ?? obj.flat_rate ?? obj.premium ?? obj.hourly ?? Object.values(obj)[0];
+      return val != null ? `$${val}` : null;
+    }
+    if (typeof raw === "object") {
+      const val = raw.standard ?? raw.flat_rate ?? raw.premium ?? raw.hourly ?? Object.values(raw)[0];
+      return val != null ? `$${val}` : null;
+    }
+  } catch {}
+  return null;
+}
+
+function RatingBadge({ value }) {
+  const v = Math.max(0, Math.min(5, Number(value)||0));
+  const full = Math.floor(v);
+  const half = v - full >= 0.5;
+  const empty = 5 - full - (half ? 1 : 0);
+  return (
+    <span className="rating">
+      {"★".repeat(full)}{half ? "☆" : ""}{"✩".repeat(empty)}
+      <span className="ratingNum">{v.toFixed(1)}</span>
+    </span>
+  );
 }
