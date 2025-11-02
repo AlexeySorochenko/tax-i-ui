@@ -213,3 +213,9 @@ tbody tr:hover{background:rgba(0,0,0,.02)}
 
 /* selected tile highlight (тонкий) */
 .tile.selected{ outline:2px solid var(--brand); }
+
+/* фикс «уезда» кнопок в визарде и аккуратные интервалы */
+.wizard .actions button { min-width: 110px; }
+.wizard .qtitle { line-height: 1.25; }
+.wizard .qtext  { line-height: 1.35; }
+
