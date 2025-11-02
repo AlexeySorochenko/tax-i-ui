@@ -4,55 +4,144 @@ import Onboarding from "./Onboarding";
 import DriverSelf from "./DriverSelf";
 
 /**
- * Отрисовывает экран в зависимости от flow_state из /periods/status:
+ * Экран водителя по состоянию флоу из /periods/status:
  *  - NEEDS_FIRM        => выбор бухгалтерской фирмы
- *  - NEEDS_PROFILE     => CTA на профиль
- *  - NEEDS_DOCUMENTS   => CTA на чек-лист документов
- *  - NEEDS_PAYMENT     => CTA на оплату/отправку
+ *  - NEEDS_PROFILE     => сразу открываем форму профиля (шаг 2 онбординга)
+ *  - NEEDS_DOCUMENTS   => чек-лист документов
+ *  - NEEDS_PAYMENT     => отправка на проверку + чат
  *  - IN_REVIEW         => статус + чат
  */
 export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
   const [flow, setFlow] = useState(null);
-  const [subview, setSubview] = useState(null);
   const [err, setErr] = useState("");
+  const [firms, setFirms] = useState([]);
+  const [subview, setSubview] = useState(null); // "profile" | "documents" | "chat" | null
 
-  async function load() {
-    if (!me?.id) return;
-    setLoading(true); setErr("");
+  async function refresh() {
+    setLoading(true);
+    setErr("");
     try {
-      const st = await periodStatus(API, token, me.id, year);
-      setFlow(st);
+      const st = await periodStatus(API, token, me?.id, year);
+      setFlow(st?.flow_state || "NEEDS_FIRM");
     } catch (e) {
       setErr(String(e?.message || e));
-    } finally { setLoading(false); }
+      setFlow(null);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [API, token, me?.id, year]);
+  useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [year]);
 
-  if (loading) return <div className="card">Loading…</div>;
-  if (err) return <div className="card alert">{err}</div>;
-  if (!flow) return <div className="card">No data</div>;
+  // Подгружаем фирмы при NEEDS_FIRM
+  useEffect(() => {
+    if (flow === "NEEDS_FIRM") {
+      listFirms(API, token)
+        .then((x) => setFirms(Array.isArray(x) ? x : []))
+        .catch((e) => { setErr(String(e?.message || e)); setFirms([]); });
+    }
+    // eslint-disable-next-line
+  }, [flow]);
 
-  switch (flow.flow_state) {
+  // Авто-открываем форму профиля, как только бэкенд вернул NEEDS_PROFILE
+  useEffect(() => {
+    if (flow === "NEEDS_PROFILE" && subview !== "profile") {
+      setSubview("profile");
+    }
+  }, [flow, subview]);
+
+  async function choose(firmId) {
+    try {
+      await selectFirm(API, token, firmId);
+      await refresh();                // бэкенд переключит на NEEDS_PROFILE → выше откроется форма
+    } catch (e) {
+      alert(String(e?.message || e));
+    }
+  }
+
+  // ====== Встроенные саб-экраны без переходов ======
+  if (subview === "profile") {
+    return (
+      <Onboarding
+        API={API}
+        token={token}
+        me={me}
+        initialStep={2}
+        onDone={() => { setSubview(null); refresh(); }}
+      />
+    );
+  }
+
+  if (subview === "documents") {
+    return (
+      <div className="card">
+        <DriverSelf API={API} token={token} me={me} />
+      </div>
+    );
+  }
+
+  if (subview === "chat") {
+    return (
+      <div className="card">
+        <h2>Chat</h2>
+        <div className="note">Your accountant will see your messages.</div>
+        <textarea style={{ width: "100%", minHeight: 120 }} placeholder="Type a message..." />
+        <div className="row" style={{ marginTop: 8, justifyContent: "flex-end" }}>
+          <button className="secondary" onClick={() => setSubview(null)}>Back</button>
+          <button onClick={() => alert("Message sent")}>Send</button>
+        </div>
+      </div>
+    );
+  }
+
+  // ====== Основные состояния ======
+  function priceBadge(pricing) {
+    if (!pricing) return null;
+    const v = Number(pricing?.tax_return) || Number(pricing?.base);
+    if (!v || Number.isNaN(v)) return null;
+    return `$${v}`;
+  }
+
+  switch (flow) {
     case "NEEDS_FIRM":
-      return <ChooseFirm API={API} token={token} onChosen={load} />;
-    case "NEEDS_PROFILE":
       return (
         <div className="card">
-          <h2>Complete your profile</h2>
-          <p>We need a few details before we start.</p>
-          <a className="primary" onClick={()=>setSubview("profile")}>Open profile</a>
+          <h2>Choose your accounting firm</h2>
+          {loading && <div className="note">Loading…</div>}
+          {err && <div className="alert">{err}</div>}
+
+          <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 12 }}>
+            {firms.map(f => (
+              <div key={f.id} className="tile" style={{ alignItems: "flex-start" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4, wordBreak: "break-word" }}>{f.name}</div>
+                  {f.avg_rating != null && (
+                    <span className="badge" style={{ marginRight: 8 }}>★ {Number(f.avg_rating).toFixed(1)}</span>
+                  )}
+                  {priceBadge(f.services_pricing) && (
+                    <span className="badge">{priceBadge(f.services_pricing)}</span>
+                  )}
+                  {f.description && (
+                    <div className="note" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{f.description}</div>
+                  )}
+                </div>
+                <button className="secondary rightChip" onClick={() => choose(f.id)}>Choose</button>
+              </div>
+            ))}
+          </div>
         </div>
       );
+
     case "NEEDS_DOCUMENTS":
       return (
         <div className="card">
           <h2>Your checklist</h2>
           <p>Please upload requested documents.</p>
-          <a className="primary" onClick={()=>setSubview("documents")}>Open checklist</a>
+          <button className="primary" onClick={() => setSubview("documents")}>Open checklist</button>
         </div>
       );
+
     case "NEEDS_PAYMENT":
       return (
         <div className="card">
@@ -60,105 +149,30 @@ export default function DriverFlow({ API, token, me, year }) {
           <p>All documents are ready. Please submit to your accountant.</p>
           <div className="row" style={{ gap: 8 }}>
             <button onClick={() => setSubview("chat")}>Ask a question</button>
-            <button
-              className="primary"
-              onClick={async () => {
-                try {
-                  await submitPaymentStub(API, token, year);
-                  await refresh(); // вернётся IN_REVIEW из /periods/status
-                } catch (e) {
-                  alert(String(e));
-                }
-              }}
-            >
-              Submit
-            </button>
+            <button className="primary" onClick={() => setFlow("IN_REVIEW")}>Submit</button>
           </div>
         </div>
       );
+
     case "IN_REVIEW":
       return (
         <div className="card">
           <h2>In review</h2>
-          <p>Your accountant is working on your return.</p>
-          <a className="secondary" onClick={()=>setSubview("chat") }>Open chat</a>
+          <div className="note">Your accountant is reviewing your documents.</div>
+          <div className="row" style={{ gap: 8, marginTop: 8 }}>
+            <button onClick={() => setSubview("chat")}>Open chat</button>
+            <button className="secondary" onClick={() => setSubview("documents")}>View documents</button>
+          </div>
         </div>
       );
+
     default:
       return (
         <div className="card">
-          <h2>Dashboard</h2>
-          <pre className="note">{JSON.stringify(flow, null, 2)}</pre>
+          <h2>Welcome</h2>
+          <div className="note">Select a firm to get started.</div>
+          <button className="primary" onClick={() => setFlow("NEEDS_FIRM")}>Pick a firm</button>
         </div>
       );
   }
-}
-
-function priceBadge(services_pricing) {
-  if (!services_pricing) return null;
-  // Поддержка как "1000", так и JSON-строки {"standard":250}
-  const str = String(services_pricing);
-  if (/^\d+(\.\d+)?$/.test(str)) return `$${Number(str).toFixed(0)}`;
-  try {
-    const obj = JSON.parse(str);
-    const key = Object.keys(obj)[0];
-    const val = obj[key];
-    if (val == null || isNaN(Number(val))) return null;
-    return `$${Number(val).toFixed(0)}`;
-  } catch { return null; }
-}
-
-function ChooseFirm({ API, token, onChosen }) {
-  const [firms, setFirms] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    (async () => {
-      setLoading(true); setErr("");
-      try {
-        const f = await listFirms(API, token);
-        setFirms(Array.isArray(f) ? f : []);
-      } catch (e) {
-        setErr(String(e?.message || e));
-      } finally { setLoading(false); }
-    })();
-  }, [API, token]);
-
-  async function choose(id) {
-    try {
-      await selectFirm(API, token, id);
-      onChosen?.();
-    } catch (e) {
-      alert(String(e?.message || e));
-    }
-  }
-
-  return (
-    <div className="card">
-      <h2>Choose your accounting firm</h2>
-      {loading && <div className="note">Loading…</div>}
-      {err && <div className="alert">{err}</div>}
-
-      <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 12 }}>
-        {firms.map(f => (
-          <div key={f.id} className="tile" style={{ alignItems: "flex-start" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, marginBottom: 4, wordBreak: "break-word" }}>{f.name}</div>
-              {f.avg_rating != null && (
-                <span className="badge" style={{ marginRight: 8 }}>★ {Number(f.avg_rating).toFixed(1)}</span>
-              )}
-              {priceBadge(f.services_pricing) && (
-                <span className="badge">{priceBadge(f.services_pricing)}</span>
-              )}
-              {f.description && (
-                <div className="note" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{f.description}</div>
-              )}
-            </div>
-            <button className="secondary rightChip" onClick={() => choose(f.id)}>Choose</button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
 }
