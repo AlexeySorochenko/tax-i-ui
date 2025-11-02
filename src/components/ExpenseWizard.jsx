@@ -3,189 +3,321 @@ import React, { useEffect, useMemo, useState } from "react";
 /**
  * props:
  *  - year: number
- *  - items: [{ code, label, amount|null }]
+ *  - items: [{ code, label, amount|null, description?: string }]
  *  - onSaveOne: (code, amount|null) => Promise|void
  *  - onFinished: () => Promise|void
- *  - onGoToFirms?: () => void   // <— новая кнопка "Change firm"
+ *  - onGoToFirms?: () => void   // (необязательно) кнопка "Change firm"
  */
 export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished, onGoToFirms }) {
+  const totalSteps = (items || []).length || 1;
   const [step, setStep] = useState(0);
-  const [local, setLocal] = useState(() => (items || []).map(x => ({ ...x, tempAmount: x.amount ?? "" })));
-  const [answerYes, setAnswerYes] = useState(() => (items || []).map(x => (x.amount != null ? true : null)));
+
+  // локальная копия значений (чтобы не дёргать бек на каждый ввод)
+  const [local, setLocal] = useState(() =>
+    (items || []).map(x => ({ ...x, tempAmount: x.amount ?? "" }))
+  );
+  const [answerYes, setAnswerYes] = useState(() =>
+    (items || []).map(x => (x.amount != null ? true : null)) // null=не отвечал, true/false=да/нет
+  );
+
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  // если пришёл новый список items (перезагрузили), синхронизируем
   useEffect(() => {
     setLocal((items || []).map(x => ({ ...x, tempAmount: x.amount ?? "" })));
     setAnswerYes((items || []).map(x => (x.amount != null ? true : null)));
-    setStep(0);
   }, [items]);
 
-  const len = local.length;
-  const cur = local[step] || null;
-  const progress = len ? Math.round((step / len) * 100) : 0;
+  const runningTotal = useMemo(() => {
+    const nums = (local || []).map(i => toNum(i.tempAmount));
+    const sum = nums.reduce((a, b) => a + (isNaN(b) ? 0 : b), 0);
+    return sum;
+  }, [local]);
 
-  const total = useMemo(
-    () => local.reduce((s, x) => s + (Number(x.tempAmount) || 0), 0),
-    [local]
-  );
+  const current = local[step] || { code: "", label: "", tempAmount: "" };
+  const currentAnswer = answerYes[step];
 
-  const canNext = useMemo(() => {
-    const a = answerYes[step];
-    if (a === null) return false;
-    if (a === false) return true;
-    const v = Number(local[step]?.tempAmount);
-    return Number.isFinite(v) && v >= 0;
-  }, [answerYes, step, local]);
+  function toNum(v) {
+    if (v === "" || v === null || v === undefined) return NaN;
+    const n = typeof v === "number" ? v : Number(String(v).replace(/[^\d.-]/g, ""));
+    return isNaN(n) ? NaN : n;
+  }
 
-  const setYes = (val) => {
-    setAnswerYes(arr => arr.map((a, i) => (i === step ? val : a)));
-    if (val === false) {
-      setLocal(prev => prev.map((x, i) => (i === step ? { ...x, tempAmount: "" } : x)));
-    }
-  };
-
-  const editAmount = (val) => {
-    const clean = String(val).replace(",", ".");
-    if (clean === "") {
-      setLocal(prev => prev.map((x, i) => (i === step ? { ...x, tempAmount: "" } : x)));
-      return;
-    }
-    const n = Number(clean);
-    if (Number.isFinite(n) && n >= 0) {
-      setLocal(prev => prev.map((x, i) => (i === step ? { ...x, tempAmount: clean } : x)));
-    }
-  };
-
-  const bump = (d) => {
-    setLocal(prev => prev.map((x, i) => {
-      if (i !== step) return x;
-      const v = Number(x.tempAmount || 0) + d;
-      return { ...x, tempAmount: v < 0 ? 0 : Number(v.toFixed(2)) };
-    }));
-  };
-
-  const persistCurrent = async () => {
-    if (!cur) return;
-    const yes = answerYes[step];
-    const toSave = yes ? Number(local[step].tempAmount || 0) : null;
-    if (onSaveOne) await onSaveOne(cur.code, toSave);
-  };
-
-  const next = async () => {
-    if (!canNext || busy) return;
-    setBusy(true); setErr("");
-    try {
-      await persistCurrent();
-      if (step + 1 < len) setStep(step + 1);
-      else if (onFinished) await onFinished();
-    } catch (e) {
-      setErr(String(e?.message || e));
-    } finally { setBusy(false); }
-  };
-
-  const back = async () => {
-    if (busy) return;
-    setBusy(true); setErr("");
-    try {
-      await persistCurrent();
-      setStep(s => (s > 0 ? s - 1 : 0));
-    } catch (e) {
-      setErr(String(e?.message || e));
-    } finally { setBusy(false); }
-  };
-
-  if (!cur) {
-    return (
-      <div className="card">
-        <h2>Expense interview — {year}</h2>
-        <div className="note">No questions for this year.</div>
-      </div>
+  function setAmount(v) {
+    setLocal(prev =>
+      prev.map((it, idx) => (idx === step ? { ...it, tempAmount: v } : it))
     );
   }
 
-  const hint = HINTS[cur.code] || DEFAULT_HINT;
+  function incAmount(delta) {
+    setLocal(prev =>
+      prev.map((it, idx) => {
+        if (idx !== step) return it;
+        const cur = toNum(it.tempAmount) || 0;
+        return { ...it, tempAmount: String(Math.max(0, cur + delta)) };
+      })
+    );
+  }
+
+  function setYesNo(val /* true | false */) {
+    setAnswerYes(prev => prev.map((a, idx) => (idx === step ? val : a)));
+    if (val === false) {
+      // если "No" — очищаем сумму
+      setAmount("");
+    } else if (val === true && (current.tempAmount === "" || current.tempAmount == null)) {
+      // при первом "Yes" подставим 0 для фокуса
+      setAmount("0");
+    }
+  }
+
+  async function goNext() {
+    setErr("");
+    const code = current.code;
+
+    // сохраняем ответ текущего шага
+    try {
+      setBusy(true);
+      if (answerYes[step] === false) {
+        await onSaveOne?.(code, null);
+      } else if (answerYes[step] === true) {
+        const val = toNum(current.tempAmount);
+        await onSaveOne?.(code, isNaN(val) ? 0 : val);
+      }
+    } catch (e) {
+      setErr(String(e?.message || e));
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+
+    // переход
+    if (step < totalSteps - 1) {
+      setStep(s => s + 1);
+    } else {
+      await onFinished?.();
+    }
+  }
+
+  function goBack() {
+    setErr("");
+    if (step > 0) setStep(s => s - 1);
+  }
+
+  // простые подсказки (можно расширять)
+  const DEFAULT_HINT = { text: "Enter the amount you actually paid in this tax year." };
+  const HINTS = {
+    CAR_PAYMENT: {
+      text:
+        "Monthly payments related to your work vehicle (lease/loan). If you use standard mileage, don’t double-count depreciation.",
+    },
+    FUEL: { text: "Gas, diesel, charging. Keep receipts or bank/aggregator statements." },
+    INSURANCE: { text: "Commercial auto, liability, cargo, or other business policies." },
+    TOLLS: { text: "Bridge, road, and tunnel tolls used for work." },
+  };
+  const hint = HINTS[current.code] || DEFAULT_HINT;
 
   return (
-    <div className="card wizard">
-      <div className="row spread">
-        <h2>Expense interview — {year}</h2>
-        <span className="badge">{`Step ${step + 1}/${len}`}</span>
+    <div className="card">
+      {/* ---------- ШАПКА ---------- */}
+      <div className="row" style={{ alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>Expense interview — {year}</div>
+        <div style={{
+          fontSize: 12,
+          padding: "4px 10px",
+          background: "var(--chip-bg, rgba(0,0,0,0.06))",
+          borderRadius: 9999,
+        }}>
+          Step {Math.min(step + 1, totalSteps)} / {totalSteps}
+        </div>
+      </div>
+      <div
+        aria-hidden
+        style={{
+          height: 6,
+          borderRadius: 9999,
+          background: "rgba(0,0,0,0.08)",
+          overflow: "hidden",
+          marginBottom: 14,
+        }}
+      >
+        <div
+          style={{
+            height: "100%",
+            width: `${((step + 1) / totalSteps) * 100}%`,
+            background: "var(--primary, #2ea7ff)",
+            transition: "width .25s ease",
+          }}
+        />
       </div>
 
-      <div className="progress"><div className="bar" style={{ width: `${progress}%` }} /></div>
+      {/* ---------- ТЕЛО ШАГА ---------- */}
+      {err && <div className="alert" style={{ marginBottom: 10 }}>{err}</div>}
 
-      {err && <div className="alert" style={{marginTop:8}}>Error: {err}</div>}
+      <div style={{ display: "grid", gap: 12 }}>
+        {/* Заголовок категории */}
+        <div style={{ fontSize: 18, fontWeight: 700 }}>
+          {current.label || current.code || "—"}
+        </div>
 
-      <div className="row" style={{ marginTop: 10, alignItems:"baseline", gap:8 }}>
-        <span className="chip">{cur.code}</span>
-        <h3 className="qtitle">{cur.label}</h3>
-      </div>
+        {/* Описание вопроса */}
+        <div className="note" style={{ fontSize: 15 }}>
+          Did you have any <b>{current.label || current.code}</b> expenses in {year}?
+        </div>
 
-      <p className="qtext">Did you have any <b>{cur.label}</b> expenses in {year}?</p>
-
-      <div className="seg">
-        <button type="button" className={`segbtn ${answerYes[step] === true ? "active" : ""}`} onClick={() => setYes(true)}>Yes</button>
-        <button type="button" className={`segbtn ${answerYes[step] === false ? "active" : ""}`} onClick={() => setYes(false)}>No</button>
-      </div>
-
-      {answerYes[step] === true && (
-        <div className="amountRow">
-          <label className="lbl">Amount</label>
-          <div className="numRow">
-            <div className="numWrap">
-              <span className="prefix">$</span>
-              <input className="num" inputMode="decimal" placeholder="0.00"
-                     value={String(local[step].tempAmount)}
-                     onChange={(e)=>editAmount(e.target.value)} />
-            </div>
-            <div className="quick">
-              <button type="button" onClick={()=>bump(50)}>+50</button>
-              <button type="button" onClick={()=>bump(100)}>+100</button>
-              <button type="button" onClick={()=>bump(250)}>+250</button>
-            </div>
+        {/* Hint / Callout */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "24px 1fr",
+            gap: 10,
+            padding: "10px 12px",
+            border: "1px solid rgba(0,0,0,0.08)",
+            background: "rgba(0,0,0,0.03)",
+            borderRadius: 12,
+          }}
+        >
+          <div style={{
+            width: 24, height: 24, borderRadius: 9999,
+            display: "grid", placeItems: "center",
+            background: "rgba(0,0,0,0.06)", fontSize: 12
+          }}>💡</div>
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 2 }}>What to include</div>
+            <div style={{ fontSize: 14.5 }}>{hint.text}</div>
           </div>
         </div>
-      )}
 
-      <div className="hint">
-        <div className="hintTitle">WHAT TO INCLUDE</div>
-        <div className="hintText">{hint.text}</div>
-        {hint.example && <div className="hintExample"><b>Example:</b> {hint.example}</div>}
+        {/* Yes / No переключатель */}
+        <SegmentedYesNo
+          value={currentAnswer}
+          onChange={setYesNo}
+        />
+
+        {/* Поле суммы — показываем только при Yes */}
+        {currentAnswer === true && (
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontWeight: 600 }}>Amount</div>
+            <AmountInput
+              value={String(current.tempAmount ?? "")}
+              onChange={setAmount}
+              onInc={incAmount}
+            />
+            <div className="note" style={{ marginTop: 2 }}>You can adjust later.</div>
+          </div>
+        )}
       </div>
 
-      {/* ---- ДЕЙСТВИЯ: слева — Change firm (если есть), справа — Back/Next/Finish рядом ---- */}
-      <div className="actions">
-        <div className="actions-left">
+      {/* ---------- ФУТЕР ---------- */}
+      <div className="row" style={{ marginTop: 16, alignItems: "center", justifyContent: "space-between" }}>
+        <div className="row" style={{ gap: 8, alignItems: "center" }}>
+          <button className="secondary" onClick={goBack} disabled={busy || step === 0}>Back</button>
           {onGoToFirms && (
-            <button type="button" className="ghost" onClick={onGoToFirms}>
-              Change firm
-            </button>
+            <button className="secondary" onClick={onGoToFirms} disabled={busy}>Change firm</button>
           )}
         </div>
-        <div className="actions-right">
-          <button className="secondary" onClick={back} disabled={busy || step === 0}>Back</button>
-          {step + 1 < len
-            ? <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Next"}</button>
-            : <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Finish"}</button>
-          }
-        </div>
-      </div>
 
-      <div className="row" style={{ justifyContent:"flex-end", marginTop: 10 }}>
-        <span className="note">Running total:&nbsp;</span>
-        <b>${total.toFixed(2)}</b>
+        <div className="row" style={{ gap: 16, alignItems: "center" }}>
+          <div className="note">
+            Running total:&nbsp;
+            <b>${runningTotal.toFixed(2)}</b>
+          </div>
+          <button className="primary" onClick={goNext} disabled={busy}>
+            {step < totalSteps - 1 ? "Next" : "Finish"}
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
-const DEFAULT_HINT = { text: "Enter the amount you actually paid in this tax year." };
-const HINTS = {
-  CAR_PAYMENT: {
-    text: "Monthly payments related to your work vehicle (lease/loan/rent). If you use standard mileage, don’t double-count depreciation.",
-  },
-  FUEL: { text: "Gas, diesel, charging. Keep receipts or statements." },
-  INSURANCE: { text: "Commercial auto, liability, cargo, or other business policies." },
-  TOLLS: { text: "Bridge, road, and tunnel tolls used for work." },
-};
+/* =========================
+ * UI-подкомпоненты (локальные)
+ * ========================= */
+
+function SegmentedYesNo({ value /* true|false|null */, onChange }) {
+  const isYes = value === true;
+  const isNo = value === false;
+
+  return (
+    <div style={{
+      display: "inline-flex",
+      borderRadius: 9999,
+      background: "rgba(0,0,0,0.06)",
+      padding: 4,
+      gap: 4,
+      width: "fit-content"
+    }}>
+      <button
+        type="button"
+        onClick={() => onChange(true)}
+        style={{
+          padding: "8px 14px",
+          borderRadius: 9999,
+          border: 0,
+          background: isYes ? "var(--primary, #2ea7ff)" : "transparent",
+          color: isYes ? "#fff" : "inherit",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Yes
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(false)}
+        style={{
+          padding: "8px 14px",
+          borderRadius: 9999,
+          border: 0,
+          background: isNo ? "var(--primary, #2ea7ff)" : "transparent",
+          color: isNo ? "#fff" : "inherit",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        No
+      </button>
+    </div>
+  );
+}
+
+function AmountInput({ value, onChange, onInc }) {
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ position: "relative", maxWidth: 280 }}>
+        <span style={{
+          position: "absolute", left: 10, top: 10, pointerEvents: "none",
+          opacity: 0.75, fontWeight: 600
+        }}>$</span>
+        <input
+          inputMode="decimal"
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width: "100%",
+            padding: "10px 12px 10px 24px",
+            fontSize: 18,
+            borderRadius: 12,
+            border: "1px solid rgba(0,0,0,0.1)",
+            outline: "none",
+          }}
+        />
+      </div>
+      <div className="row" style={{ gap: 8 }}>
+        {[50, 100, 250].map(v => (
+          <button
+            key={v}
+            type="button"
+            className="secondary"
+            onClick={() => onInc(v)}
+            style={{ borderRadius: 9999, padding: "6px 10px" }}
+          >
+            +{v}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
