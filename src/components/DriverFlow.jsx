@@ -58,7 +58,22 @@ export default function DriverFlow({ API, token, me, year }) {
         <div className="card">
           <h2>Submit for review</h2>
           <p>All documents are ready. Please submit to your accountant.</p>
-          <a className="primary" onClick={()=>{ setFlow("IN_REVIEW"); }}>Submit</a>
+          <div className="row" style={{ gap: 8 }}>
+            <button onClick={() => setSubview("chat")}>Ask a question</button>
+            <button
+              className="primary"
+              onClick={async () => {
+                try {
+                  await submitPaymentStub(API, token, year);
+                  await refresh(); // вернётся IN_REVIEW из /periods/status
+                } catch (e) {
+                  alert(String(e));
+                }
+              }}
+            >
+              Submit
+            </button>
+          </div>
         </div>
       );
     case "IN_REVIEW":
