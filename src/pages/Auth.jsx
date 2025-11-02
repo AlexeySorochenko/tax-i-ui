@@ -1,93 +1,83 @@
 import React, { useState } from "react";
 import { login, register } from "../components/api";
 
-export default function Auth({ API, onLoggedIn, defaultTab = "login", onBack }) {
+export default function Auth({ API, onLoggedIn, defaultTab = "login" }) {
   const [tab, setTab] = useState(defaultTab); // 'login' | 'register'
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState(""); // для регистрации
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  // Login
-  const [lemail, setLEmail] = useState("");
-  const [lpass, setLPass] = useState("");
-
-  // Register
-  const [r, setR] = useState({
-    email: "", phone: "", first_name: "", last_name: "", patronymic: "", password: ""
-  });
-
-  const doLogin = async () => {
-    setErr(""); setBusy(true);
+  const doLogin = async (e) => {
+    e.preventDefault(); if (busy) return;
+    setBusy(true); setErr("");
     try {
-      const tok = await login(API, lemail.trim(), lpass);
-      onLoggedIn(tok.access_token);
-    } catch (e) { setErr(extractErr(e)); }
-    finally { setBusy(false); }
+      const tok = await login(API, { email, password });
+      onLoggedIn?.(tok.access_token);
+    } catch (e2) {
+      setErr(String(e2?.message || e2));
+    } finally { setBusy(false); }
   };
 
-  const doRegister = async () => {
-    setErr(""); setBusy(true);
+  const doRegister = async (e) => {
+    e.preventDefault(); if (busy) return;
+    setBusy(true); setErr("");
     try {
-      const invite = new URLSearchParams(location.search).get("invite_code") || undefined;
-      await register(API, r, invite);
-      const tok = await login(API, r.email.trim(), r.password);
-      onLoggedIn(tok.access_token);
-    } catch (e) { setErr(extractErr(e)); }
-    finally { setBusy(false); }
+      if (!name.trim()) { setErr("Please enter your name"); setBusy(false); return; }
+      await register(API, { email, name: name.trim(), password, role: "driver" });
+      // после успешной регистрации сразу логинимся
+      const tok = await login(API, { email, password });
+      onLoggedIn?.(tok.access_token);
+    } catch (e2) {
+      setErr(String(e2?.message || e2));
+    } finally { setBusy(false); }
   };
 
   return (
-    <div className="grid" style={{ maxWidth: 560, margin: "24px auto" }}>
-      <div className="card">
-        <div className="row spread">
-          <div className="tabbar">
-            <button className={tab==="login"?"active":""} onClick={()=>setTab("login")}>Login</button>
-            <button className={tab==="register"?"active":""} onClick={()=>setTab("register")}>Register</button>
-          </div>
-          {onBack && <button className="secondary" onClick={onBack}>Back</button>}
-        </div>
+    <div className="card" style={{ maxWidth: 460, margin: "24px auto" }}>
+      <h2 style={{ marginBottom: 12 }}>Welcome</h2>
 
-        {err && <div className="alert" style={{marginTop:12, wordBreak:"break-all"}}>{err}</div>}
-
-        {tab === "login" ? (
-          <>
-            <div className="kv" style={{marginTop:12}}>
-              <div className="k">Email</div>
-              <input type="email" placeholder="name@example.com" value={lemail} onChange={e=>setLEmail(e.target.value)} />
-              <div className="k">Password</div>
-              <input type="password" placeholder="••••••••" value={lpass} onChange={e=>setLPass(e.target.value)} />
-            </div>
-            <div className="row" style={{justifyContent:"flex-end", marginTop:12}}>
-              <button onClick={doLogin} disabled={busy || !lemail || !lpass}>{busy ? "Signing in…" : "Login"}</button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="kv" style={{marginTop:12}}>
-              <div className="k">Email</div>
-              <input type="email" value={r.email} onChange={e=>setR(s=>({...s, email:e.target.value}))} placeholder="name@example.com" />
-              <div className="k">Phone</div>
-              <input value={r.phone} onChange={e=>setR(s=>({...s, phone:e.target.value}))} placeholder="+1 555 123 4567" />
-              <div className="k">First name</div>
-              <input value={r.first_name} onChange={e=>setR(s=>({...s, first_name:e.target.value}))} />
-              <div className="k">Last name</div>
-              <input value={r.last_name} onChange={e=>setR(s=>({...s, last_name:e.target.value}))} />
-              <div className="k">Middle name</div>
-              <input value={r.patronymic} onChange={e=>setR(s=>({...s, patronymic:e.target.value}))} />
-              <div className="k">Password</div>
-              <input type="password" value={r.password} onChange={e=>setR(s=>({...s, password:e.target.value}))} />
-            </div>
-            <div className="row" style={{justifyContent:"flex-end", marginTop:12}}>
-              <button onClick={doRegister} disabled={busy || !r.email || !r.password}>
-                {busy ? "Creating…" : "Create account"}
-              </button>
-            </div>
-          </>
-        )}
+      <div className="tabbar" style={{ marginBottom: 12 }}>
+        <button className={`secondary ${tab === "login" ? "active" : ""}`} onClick={() => setTab("login")}>Login</button>
+        <button className={`secondary ${tab === "register" ? "active" : ""}`} onClick={() => setTab("register")}>Create account</button>
       </div>
+
+      {err && <div className="alert" style={{ marginBottom: 10 }}>{err}</div>}
+
+      {tab === "login" ? (
+        <form onSubmit={doLogin} className="grid" style={{ gap: 10 }}>
+          <div>
+            <h4>Email</h4>
+            <input type="email" placeholder="you@example.com" value={email} onChange={e=>setEmail(e.target.value)} required />
+          </div>
+          <div>
+            <h4>Password</h4>
+            <input type="password" placeholder="••••••••" value={password} onChange={e=>setPassword(e.target.value)} required />
+          </div>
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button className="primary" disabled={busy}>{busy ? "Signing in…" : "Login"}</button>
+          </div>
+        </form>
+      ) : (
+        <form onSubmit={doRegister} className="grid" style={{ gap: 10 }}>
+          <div>
+            <h4>Name</h4>
+            <input type="text" placeholder="John Driver" value={name} onChange={e=>setName(e.target.value)} required />
+          </div>
+          <div>
+            <h4>Email</h4>
+            <input type="email" placeholder="you@example.com" value={email} onChange={e=>setEmail(e.target.value)} required />
+          </div>
+          <div>
+            <h4>Password</h4>
+            <input type="password" placeholder="Minimum 6 chars" value={password} onChange={e=>setPassword(e.target.value)} required />
+          </div>
+          <div className="row" style={{ justifyContent: "flex-end" }}>
+            <button className="primary" disabled={busy}>{busy ? "Creating…" : "Create account"}</button>
+          </div>
+        </form>
+      )}
     </div>
   );
-}
-
-function extractErr(e){
-  try{const j = JSON.parse(String(e.message||e)); return j.detail || e.message;}catch{return String(e.message||e);}
 }
