@@ -1,53 +1,68 @@
 import React, { useEffect, useState } from "react";
 import { listFirms, selectFirm, getPersonal, putPersonal } from "./api";
 
-export default function Onboarding({ API, token, me, initialStep=1, onDone }) {
+/**
+ * Онбординг:
+ * 1) выбор фирмы
+ * 2) профиль — показываем только поля, которых не было в регистрации:
+ *    ssn, date_of_birth, mailing_address, marital_status
+ * 3) done
+ */
+export default function Onboarding({ API, token, me, initialStep = 1, onDone }) {
   const [firms, setFirms] = useState([]);
-  const [chosen, setChosen] = useState(null);
-  const [profile, setProfile] = useState(null);
+  const [profile, setProfile] = useState({});
   const [step, setStep] = useState(initialStep); // 1 marketplace, 2 profile, 3 done
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
     let alive = true;
-    listFirms(API, token).then((x)=>{ if (alive) setFirms(x||[]); }).catch(()=>{});
-    getPersonal(API, token, me.id).then((p)=>{ if (alive) setProfile(p||{}); }).catch(()=>{});
-    return () => { alive=false; };
-  }, []); // eslint-disable-line
-
-  const pickFirm = async (firm) => {
-    setBusy(true);
-    try {
-      await selectFirm(API, token, firm.id);
-      setChosen(firm);
-      setStep(2);
-    } catch (e) {
-      alert("Failed to select firm");
-    } finally {
-      setBusy(false);
+    // Фирмы нужны только если мы реально на шаге 1
+    if (initialStep === 1) {
+      listFirms(API, token).then((x)=>{ if (alive) setFirms(x||[]); }).catch(()=>{});
     }
+    // Загружаем персональный профиль (если уже есть — предзаполним)
+    getPersonal(API, token, me.id)
+      .then((p)=>{ if (alive) setProfile(p || {}); })
+      .catch(()=>{});
+    return () => { alive=false; };
+    // eslint-disable-next-line
+  }, []);
+
+  const pickFirm = async (f) => {
+    setBusy(true); setErr("");
+    try {
+      await selectFirm(API, token, f.id);
+      setStep(2);
+    } catch (e) { setErr(String(e)); }
+    finally { setBusy(false); }
   };
 
   const saveProfile = async () => {
-    setBusy(true);
+    setBusy(true); setErr("");
     try {
-      await putPersonal(API, token, me.id, profile || {});
+      // Отправляем только заполняемые здесь поля (без first_name/last_name/phone)
+      const payload = {
+        ssn: profile?.ssn || "",
+        date_of_birth: profile?.date_of_birth || "",
+        mailing_address: profile?.mailing_address || "",
+        marital_status: profile?.marital_status || "",
+      };
+      await putPersonal(API, token, me.id, payload);
       setStep(3);
-    } catch (e) {
-      alert("Failed to save profile");
-    } finally {
-      setBusy(false);
-    }
+      onDone && onDone();
+    } catch (e) { setErr(String(e)); }
+    finally { setBusy(false); }
   };
 
   return (
-    <div className="grid">
+    <div>
       {step === 1 && (
         <div className="card">
           <h2>Choose your accounting firm</h2>
-          <div className="note">Pick a firm to work with. You can change later.</div>
-          <div className="tilegrid" style={{marginTop:12}}>
-            {(firms||[]).map((f)=>(
+          {err && <div className="alert" style={{marginTop:8}}>{err}</div>}
+          <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 12, marginTop: 8 }}>
+            {firms.map((f) => (
               <div key={f.id} className="tile">
                 <div>
                   <b>{f.name}</b>
@@ -63,18 +78,47 @@ export default function Onboarding({ API, token, me, initialStep=1, onDone }) {
       {step === 2 && (
         <div className="card">
           <h2>Personal profile</h2>
-          <div className="kv" style={{marginTop:8}}>
-            <div className="k">First name</div>
-            <input value={profile?.first_name || ""} onChange={(e)=>setProfile(p=>({...p, first_name:e.target.value}))}/>
-            <div className="k">Last name</div>
-            <input value={profile?.last_name || ""} onChange={(e)=>setProfile(p=>({...p, last_name:e.target.value}))}/>
-            <div className="k">Phone</div>
-            <input value={profile?.phone || ""} onChange={(e)=>setProfile(p=>({...p, phone:e.target.value}))}/>
-            <div className="k">SSN (last 4)</div>
-            <input value={profile?.ssn_last4 || ""} onChange={(e)=>setProfile(p=>({...p, ssn_last4:e.target.value}))}/>
-            <div className="k">Address</div>
-            <input value={profile?.address || ""} onChange={(e)=>setProfile(p=>({...p, address:e.target.value}))}/>
+          <div className="note" style={{marginTop:6}}>
+            We only ask for details not provided during registration.
           </div>
+
+          <div className="kv" style={{marginTop:12}}>
+            {/* Этих полей не было в регистрации — показываем всегда */}
+            <div className="k">SSN</div>
+            <input
+              placeholder="123456789 (or last 4)"
+              value={profile?.ssn || ""}
+              onChange={(e)=>setProfile(p=>({...p, ssn:e.target.value}))}
+            />
+
+            <div className="k">Date of birth</div>
+            <input
+              type="date"
+              value={profile?.date_of_birth || ""}
+              onChange={(e)=>setProfile(p=>({...p, date_of_birth:e.target.value}))}
+            />
+
+            <div className="k">Mailing address</div>
+            <input
+              placeholder="Street, City, State, ZIP"
+              value={profile?.mailing_address || ""}
+              onChange={(e)=>setProfile(p=>({...p, mailing_address:e.target.value}))}
+            />
+
+            <div className="k">Marital status</div>
+            <select
+              value={profile?.marital_status || ""}
+              onChange={(e)=>setProfile(p=>({...p, marital_status:e.target.value}))}
+            >
+              <option value="">— choose —</option>
+              <option value="single">Single</option>
+              <option value="married">Married</option>
+              <option value="divorced">Divorced</option>
+              <option value="widowed">Widowed</option>
+            </select>
+          </div>
+
+          {err && <div className="alert" style={{marginTop:10}}>{err}</div>}
           <div className="row" style={{marginTop:12, justifyContent:"flex-end"}}>
             <button onClick={saveProfile} disabled={busy}>Save & continue</button>
           </div>
@@ -82,7 +126,6 @@ export default function Onboarding({ API, token, me, initialStep=1, onDone }) {
       )}
 
       {step === 3 && (
-        onDone && onDone(),
         <div className="card">
           <h2>You're all set 🎉</h2>
           <div className="note">Return to your Dashboard to start uploading your documents.</div>
