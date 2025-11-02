@@ -1,168 +1,144 @@
-import React, { useEffect, useMemo, useState } from "react";
-import {
-  fetchMe, periodStatus, listFirms, selectFirm,
-  getExpenses, saveExpenses
-} from "../components/api";
-import ExpenseWizard from "../components/ExpenseWizard";
+import React, { useEffect, useState } from "react";
+import { periodStatus, listFirms, selectFirm } from "../components/api";
 
-export default function DriverFlow({ API, token, year }) {
-  const [me, setMe] = useState(null);
-  const [status, setStatus] = useState(null);
+/**
+ * Показывает нужный экран по flow_state, который отдаёт /periods/status.
+ * flow_state:
+ *  - NEEDS_FIRM
+ *  - NEEDS_PROFILE
+ *  - NEEDS_DOCUMENTS
+ *  - NEEDS_PAYMENT
+ *  - IN_REVIEW
+ */
+export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [overrideView, setOverrideView] = useState(null); // 'firms' | null
+  const [flow, setFlow] = useState(null); // {flow_state, period_id, stage, checklist}
+  const [err, setErr] = useState("");
 
-  // --- bootstrap
-  const loadAll = async () => {
-    setLoading(true); setError("");
+  async function load() {
+    if (!me) return;
+    setLoading(true); setErr("");
     try {
-      const u = await fetchMe(API, token);
-      setMe(u);
-      const st = await periodStatus(API, token, u.id, year);
-      setStatus(st);
+      const st = await periodStatus(API, token, me.id, year);
+      setFlow(st);
     } catch (e) {
-      setError(String(e?.message || e));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { loadAll(); /* eslint-disable-next-line */ }, [API, token, year]);
-
-  // --- Firms view (override or flow_state)
-  const [firms, setFirms] = useState([]);
-  const loadFirms = async () => {
-    try { setFirms(await listFirms(API, token)); }
-    catch (e) { setError(String(e?.message || e)); }
-  };
-
-  const chooseFirm = async (firmId) => {
-    try {
-      await selectFirm(API, token, firmId);
-      setOverrideView(null);
-      await loadAll(); // рефрешим flow_state
-    } catch (e) { setError(String(e?.message || e)); }
-  };
-
-  // --- Expenses
-  const [exp, setExp] = useState({ businessProfileId: null, items: [] });
-
-  const startExpenses = async (businessProfileId) => {
-    const data = await getExpenses(API, token, businessProfileId, year);
-    setExp({ businessProfileId, items: data || [] });
-  };
-
-  const saveOneExpense = async (code, amount) => {
-    const next = exp.items.map(x => (x.code === code ? { ...x, amount } : x));
-    setExp({ ...exp, items: next });
-    // батчим по одному элементу — бэкенд принимает subset
-    const payload = [{ code, amount }];
-    await saveExpenses(API, token, exp.businessProfileId, year, payload);
-  };
-
-  const finishExpenses = async () => {
-    await saveExpenses(API, token, exp.businessProfileId, year,
-      exp.items.filter(x => x.amount != null).map(x => ({ code: x.code, amount: x.amount }))
-    );
-    await loadAll();
-  };
-
-  // ---- RENDER ----
-  if (loading) return <div className="card"><div className="note">Loading…</div></div>;
-  if (error)   return <div className="card"><div className="alert">{error}</div></div>;
-  if (!me)     return null;
-
-  // явный возврат к выбору фирмы
-  if (overrideView === "firms") {
-    return <FirmsPicker
-      firms={firms}
-      onLoad={loadFirms}
-      onChoose={chooseFirm}
-    />;
+      setErr(String(e?.message || e));
+    } finally { setLoading(false); }
   }
 
-  const flow = status?.flow_state;
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [API, token, me?.id, year]);
 
-  // 1) Нужно выбрать фирму
-  if (flow === "NEEDS_FIRM") {
-    return <FirmsPicker
-      firms={firms}
-      onLoad={loadFirms}
-      onChoose={chooseFirm}
-    />;
+  if (loading) return <div className="card">Loading…</div>;
+  if (err) return <div className="card alert">{err}</div>;
+  if (!flow) return <div className="card">No data</div>;
+
+  const fs = flow.flow_state;
+
+  if (fs === "NEEDS_FIRM") {
+    return <ChooseFirm API={API} token={token} onChosen={load} />;
   }
-
-  // 2) Нужно заполнить опрос / расходы
-  if (flow === "NEEDS_PROFILE" || flow === "NEEDS_EXPENSES" || exp.items.length) {
-    // если ещё не загрузили список расходов — попробуем стартануть
-    if (!exp.items.length && status?.business_profile_id) {
-      startExpenses(status.business_profile_id);
-      return <div className="card"><div className="note">Loading interview…</div></div>;
-    }
+  if (fs === "NEEDS_PROFILE") {
     return (
-      <ExpenseWizard
-        year={year}
-        items={exp.items}
-        onSaveOne={saveOneExpense}
-        onFinished={finishExpenses}
-        onGoToFirms={() => { setOverrideView("firms"); loadFirms(); }} // <— кнопка внизу визарда
-      />
+      <div className="card">
+        <h2>Complete your profile</h2>
+        <p>We need a few details before we start.</p>
+        <a className="primary" href="/profile">Open profile</a>
+      </div>
+    );
+  }
+  if (fs === "NEEDS_DOCUMENTS") {
+    return (
+      <div className="card">
+        <h2>Your checklist</h2>
+        <p>Please upload requested documents.</p>
+        <a className="primary" href="/documents">Open checklist</a>
+      </div>
+    );
+  }
+  if (fs === "NEEDS_PAYMENT") {
+    return (
+      <div className="card">
+        <h2>Submit for review</h2>
+        <p>All documents are ready. Please submit to your accountant.</p>
+        <a className="primary" href="/submit">Submit</a>
+      </div>
+    );
+  }
+  if (fs === "IN_REVIEW") {
+    return (
+      <div className="card">
+        <h2>In review</h2>
+        <p>Your accountant is working on your return.</p>
+        <a className="secondary" href="/chat">Open chat</a>
+      </div>
     );
   }
 
-  // 3) Документы / оплата / ревью — здесь может быть твой текущий рендер
   return (
     <div className="card">
-      <h2>Next steps</h2>
-      <div className="note">Flow state: <b>{flow || "unknown"}</b></div>
-      <div className="section">
-        <button className="secondary" onClick={() => { setOverrideView("firms"); loadFirms(); }}>
-          Change firm
-        </button>
-      </div>
+      <h2>Dashboard</h2>
+      <pre className="note">{JSON.stringify(flow, null, 2)}</pre>
     </div>
   );
 }
 
-/** ───────── Sub: Firms picker ───────── **/
-function FirmsPicker({ firms, onLoad, onChoose }) {
-  useEffect(() => { onLoad?.(); }, [onLoad]);
+function formatPrice(services_pricing) {
+  if (!services_pricing) return null;
+  if (/^\d+(\.\d+)?$/.test(String(services_pricing))) return `$${Number(services_pricing).toFixed(0)}`;
+  try {
+    const obj = JSON.parse(services_pricing);
+    const key = Object.keys(obj)[0];
+    const val = obj[key];
+    return `$${Number(val).toFixed(0)}`;
+  } catch {
+    return null;
+  }
+}
+
+function ChooseFirm({ API, token, onChosen }) {
+  const [firms, setFirms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    (async () => {
+      setLoading(true); setErr("");
+      try {
+        const f = await listFirms(API, token);
+        setFirms(f || []);
+      } catch (e) { setErr(String(e?.message || e)); }
+      finally { setLoading(false); }
+    })();
+  }, [API, token]);
+
+  async function choose(id) {
+    try {
+      await selectFirm(API, token, id);
+      onChosen?.();
+    } catch (e) { alert(String(e?.message || e)); }
+  }
 
   return (
     <div className="card">
       <h2>Choose your accounting firm</h2>
-      <div className="grid firmgrid">
+      {loading && <div className="note">Loading…</div>}
+      {err && <div className="alert">{err}</div>}
+
+      <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 12 }}>
         {(firms || []).map(f => (
-          <div key={f.id} className="tile firm">
-            <div className="firmBody">
-              <div className="firmTop">
-                <div className="firmName">{f.name}</div>
-                {(f.avg_rating != null) && <div className="rating">★ {Number(f.avg_rating).toFixed(1)}</div>}
+          <div key={f.id} className="tile">
+            <div>
+              <div style={{ fontWeight: 700 }}>{f.name}</div>
+              <div className="note" style={{ marginTop: 4 }}>{f.description}</div>
+              <div className="row" style={{ gap: 8, marginTop: 6 }}>
+                {f.avg_rating != null && <span className="badge">★ {Number(f.avg_rating).toFixed(1)}</span>}
+                {formatPrice(f.services_pricing) && <span className="badge">{formatPrice(f.services_pricing)}</span>}
               </div>
-              <div className="firmDescr">{f.description}</div>
-              <div className="firmPrice">{formatPrice(f.services_pricing)}</div>
             </div>
-            <div className="firmAct">
-              <button className="primary" onClick={() => onChoose?.(f.id)}>Choose</button>
-            </div>
+            <button className="secondary rightChip" onClick={() => choose(f.id)}>Choose</button>
           </div>
         ))}
       </div>
     </div>
   );
-}
-
-function formatPrice(sp) {
-  // server may return "1000" or '{"standard":250}'
-  if (!sp) return "";
-  try {
-    const num = Number(sp);
-    if (Number.isFinite(num)) return `$${num}`;
-  } catch {}
-  try {
-    const obj = JSON.parse(sp);
-    const [k, v] = Object.entries(obj)[0] || [];
-    if (v != null) return `${k}: $${v}`;
-  } catch {}
-  return String(sp);
 }
