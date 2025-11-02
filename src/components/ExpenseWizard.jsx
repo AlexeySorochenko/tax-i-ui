@@ -1,77 +1,100 @@
 import React, { useEffect, useMemo, useState } from "react";
 
 /**
- * items: [{ code, label, amount }]
- * onSaveOne(code, amount|null)
- * onFinished()
+ * props:
+ *  - year: number
+ *  - items: [{ code, label, amount|null }]
+ *  - onSaveOne: (code, amount|null) => Promise|void
+ *  - onFinished: () => Promise|void
  */
 export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished }) {
-  const [idx, setIdx] = useState(0);
-  const [answerYes, setAnswerYes] = useState(null);
-  const [amountStr, setAmountStr] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const stepCount = items.length;
-  const current = items[idx] || null;
+  const [step, setStep] = useState(0);
+  const [local, setLocal] = useState(() => (items || []).map(x => ({ ...x, tempAmount: x.amount ?? "" })));
+  const [answerYes, setAnswerYes] = useState(() => (items || []).map(x => (x.amount != null ? true : null)));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
 
   useEffect(() => {
-    if (!current) return;
-    const a = current.amount;
-    setAnswerYes(a != null);
-    setAmountStr(a != null ? String(a) : "");
-  }, [idx, current?.code]);
+    setLocal((items || []).map(x => ({ ...x, tempAmount: x.amount ?? "" })));
+    setAnswerYes((items || []).map(x => (x.amount != null ? true : null)));
+    setStep(0);
+  }, [items]);
 
-  const progress = useMemo(() => {
-    if (!stepCount) return 0;
-    const answeredBefore = idx;
-    const currentAnswered = answerYes !== null ? 1 : 0;
-    return Math.round(((answeredBefore + currentAnswered) / stepCount) * 100);
-  }, [idx, stepCount, answerYes]);
+  const len = local.length;
+  const cur = local[step] || null;
+  const progress = len ? Math.round((step / len) * 100) : 0;
 
-  const parseAmount = (s) => {
-    const normalized = String(s ?? "").replace(",", ".").trim();
-    if (normalized === "") return null;
-    const n = Number(normalized);
-    return Number.isFinite(n) && n >= 0 ? n : NaN;
-  };
+  const total = useMemo(
+    () => local.reduce((s, x) => s + (Number(x.tempAmount) || 0), 0),
+    [local]
+  );
 
-  const canNext = () => {
-    if (answerYes === null) return false;
-    if (answerYes === false) return true;
-    return Number.isFinite(parseAmount(amountStr));
-  };
+  const canNext = useMemo(() => {
+    const a = answerYes[step];
+    if (a === null) return false;
+    if (a === false) return true;
+    const v = Number(local[step]?.tempAmount);
+    return Number.isFinite(v) && v >= 0;
+  }, [answerYes, step, local]);
 
-  const saveCurrent = async () => {
-    if (!current) return;
-    let payload = null;
-    if (answerYes === true) {
-      const n = parseAmount(amountStr);
-      if (!Number.isFinite(n)) throw new Error("Please enter a valid amount.");
-      payload = n;
+  const setYes = (val) => {
+    setAnswerYes(arr => arr.map((a, i) => (i === step ? val : a)));
+    if (val === false) {
+      setLocal(prev => prev.map((x, i) => (i === step ? { ...x, tempAmount: "" } : x)));
     }
-    await onSaveOne(current.code, payload);
   };
 
-  const advance = async (finish = false) => {
-    if (!canNext() || !current) return;
+  const editAmount = (val) => {
+    const clean = String(val).replace(",", ".");
+    if (clean === "") {
+      setLocal(prev => prev.map((x, i) => (i === step ? { ...x, tempAmount: "" } : x)));
+      return;
+    }
+    const n = Number(clean);
+    if (Number.isFinite(n) && n >= 0) {
+      setLocal(prev => prev.map((x, i) => (i === step ? { ...x, tempAmount: clean } : x)));
+    }
+  };
+
+  const bump = (d) => {
+    setLocal(prev => prev.map((x, i) => {
+      if (i !== step) return x;
+      const v = Number(x.tempAmount || 0) + d;
+      return { ...x, tempAmount: v < 0 ? 0 : Number(v.toFixed(2)) };
+    }));
+  };
+
+  const persistCurrent = async () => {
+    if (!cur) return;
+    const yes = answerYes[step];
+    const toSave = yes ? Number(local[step].tempAmount || 0) : null;
+    if (onSaveOne) await onSaveOne(cur.code, toSave);
+  };
+
+  const next = async () => {
+    if (!canNext || busy) return;
+    setBusy(true); setErr("");
     try {
-      setSaving(true);
-      await saveCurrent();
-      setSaving(false);
-      if (finish || idx + 1 >= stepCount) {
-        onFinished && onFinished();
-      } else {
-        setIdx(i => i + 1);
-      }
+      await persistCurrent();
+      if (step + 1 < len) setStep(step + 1);
+      else if (onFinished) await onFinished();
     } catch (e) {
-      setSaving(false);
-      alert(extractErr(e));
-    }
+      setErr(String(e?.message || e));
+    } finally { setBusy(false); }
   };
 
-  const back = () => { if (idx > 0) setIdx(i => i - 1); };
+  const back = async () => {
+    if (busy) return;
+    setBusy(true); setErr("");
+    try {
+      await persistCurrent();
+      setStep(s => (s > 0 ? s - 1 : 0));
+    } catch (e) {
+      setErr(String(e?.message || e));
+    } finally { setBusy(false); }
+  };
 
-  if (!current) {
+  if (!cur) {
     return (
       <div className="card">
         <h2>Expense interview — {year}</h2>
@@ -80,66 +103,78 @@ export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished 
     );
   }
 
+  const hint = HINTS[cur.code] || DEFAULT_HINT;
+
   return (
-    <div className="card">
-      <div className="row spread" style={{alignItems:"center", marginBottom:6}}>
+    <div className="card wizard">
+      <div className="row spread">
         <h2>Expense interview — {year}</h2>
-        <span className="badge">{`Step ${idx+1}/${stepCount}`}</span>
+        <span className="badge">{`Step ${step + 1}/${len}`}</span>
       </div>
 
-      <div className="progress"><div className="bar" style={{width:`${progress}%`}}/></div>
-      <div className="note" style={{marginTop:4}}>{progress}% complete</div>
+      <div className="progress"><div className="bar" style={{ width: `${progress}%` }} /></div>
 
-      <div className="wizardCard">
-        <div className="row" style={{gap:8, alignItems:"center", flexWrap:"wrap"}}>
-          <span className="tag">{current.code}</span>
-          <div className="qtitle">{current.label || pretty(current.code)}</div>
-        </div>
+      {err && <div className="alert" style={{marginTop:8}}>Error: {err}</div>}
 
-        <div className="qtext">
-          Did you have any <b>{current.label || pretty(current.code)}</b> expenses in {year}?
-        </div>
+      <div className="row" style={{ marginTop: 10, alignItems:"baseline", gap:8 }}>
+        <span className="chip">{cur.code}</span>
+        <h3 className="qtitle">{cur.label}</h3>
+      </div>
 
-        <div className="seg">
-          <button className={answerYes===true ? "on" : ""} onClick={()=>setAnswerYes(true)} type="button">Yes</button>
-          <button className={answerYes===false ? "on" : ""} onClick={()=>setAnswerYes(false)} type="button">No</button>
-        </div>
+      <p className="qtext">Did you have any <b>{cur.label}</b> expenses in {year}?</p>
 
-        {answerYes === true && (
-          <>
-            <div className="k" style={{marginTop:8}}>Amount</div>
-            <div className="row" style={{gap:8, flexWrap:"wrap"}}>
-              <input
-                inputMode="decimal" placeholder="0.00"
-                value={amountStr} onChange={e=>setAmountStr(e.target.value)}
-                style={{flex:"1 1 220px", maxWidth:260}}
-              />
-              <button className="secondary" type="button" onClick={()=>setAmountStr(adjust(amountStr, 50))}>+50</button>
-              <button className="secondary" type="button" onClick={()=>setAmountStr(adjust(amountStr,100))}>+100</button>
-              <button className="secondary" type="button" onClick={()=>setAmountStr(adjust(amountStr,250))}>+250</button>
+      <div className="seg">
+        <button type="button" className={`segbtn ${answerYes[step] === true ? "active" : ""}`} onClick={() => setYes(true)}>Yes</button>
+        <button type="button" className={`segbtn ${answerYes[step] === false ? "active" : ""}`} onClick={() => setYes(false)}>No</button>
+      </div>
+
+      {answerYes[step] === true && (
+        <div className="amountRow">
+          <label className="lbl">Amount</label>
+          <div className="numRow">
+            <div className="numWrap">
+              <span className="prefix">$</span>
+              <input className="num" inputMode="decimal" placeholder="0.00"
+                     value={String(local[step].tempAmount)}
+                     onChange={(e)=>editAmount(e.target.value)} />
             </div>
-
-            <div className="helper">
-              <div className="helperTitle">WHAT TO INCLUDE</div>
-              <div className="helperText">
-                Monthly payments related to your work vehicle (lease/loan/rent). If you use standard mileage, don’t double-count depreciation.
-              </div>
+            <div className="quick">
+              <button type="button" onClick={()=>bump(50)}>+50</button>
+              <button type="button" onClick={()=>bump(100)}>+100</button>
+              <button type="button" onClick={()=>bump(250)}>+250</button>
             </div>
-          </>
-        )}
-
-        <div className="row" style={{justifyContent:"space-between", marginTop:12}}>
-          <button className="secondary" type="button" onClick={back} disabled={idx===0 || saving}>Back</button>
-          {idx+1<stepCount
-            ? <button type="button" onClick={()=>advance(false)} disabled={!canNext() || saving}>{saving ? "Saving…" : "Next"}</button>
-            : <button type="button" onClick={()=>advance(true)}  disabled={!canNext() || saving}>{saving ? "Saving…" : "Finish"}</button>
-          }
+          </div>
         </div>
+      )}
+
+      <div className="hint">
+        <div className="hintTitle">WHAT TO INCLUDE</div>
+        <div className="hintText">{hint.text}</div>
+        {hint.example && <div className="hintExample"><b>Example:</b> {hint.example}</div>}
+      </div>
+
+      <div className="row spread actions" style={{ marginTop: 16 }}>
+        <button className="secondary" onClick={back} disabled={busy || step === 0}>Back</button>
+        {step + 1 < len
+          ? <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Next"}</button>
+          : <button className="primary" onClick={next} disabled={busy || !canNext}>{busy ? "Saving…" : "Finish"}</button>
+        }
+      </div>
+
+      <div className="row" style={{ justifyContent:"flex-end", marginTop: 10 }}>
+        <span className="note">Running total:&nbsp;</span>
+        <b>${total.toFixed(2)}</b>
       </div>
     </div>
   );
 }
 
-function pretty(code){ return String(code).replaceAll("_"," ").toLowerCase(); }
-function adjust(s, delta){ const n=Number(String(s||"0").replace(",",".")); const base=Number.isFinite(n)?n:0; return String(Math.max(0, +(base+delta).toFixed(2))); }
-function extractErr(e){ try{const j=JSON.parse(String(e.message||e));return j.detail||e.message;}catch{return String(e.message||e);} }
+const DEFAULT_HINT = { text: "Enter the amount you actually paid in this tax year." };
+const HINTS = {
+  CAR_PAYMENT: {
+    text: "Monthly payments related to your work vehicle (lease/loan/rent). If you use standard mileage, don’t double-count depreciation.",
+  },
+  FUEL: { text: "Gas, diesel, charging. Keep receipts or statements." },
+  INSURANCE: { text: "Commercial auto, liability, cargo, or other business policies." },
+  TOLLS: { text: "Bridge, road, and tunnel tolls used for work." },
+};
