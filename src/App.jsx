@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { fetchMe, login } from "./components/api";
+import { fetchMe } from "./components/api";
 import DriverFlow from "./components/DriverFlow";
 import AccountantHome from "./components/AccountantHome";
-import Register from "./pages/Register";
+import Auth from "./pages/Auth";
 
 const API = import.meta.env.VITE_API || "https://tax-i.onrender.com";
 
@@ -11,66 +11,57 @@ export default function App() {
   const [me, setMe] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear());
   const [dark, setDark] = useState(false);
-  const [mode, setMode] = useState("auto"); // auto | register | driver | accountant
 
   useEffect(() => {
     if (!token) { setMe(null); return; }
-    fetchMe(API, token).then(setMe).catch(()=>{ localStorage.removeItem("access_token"); setToken(""); });
+    fetchMe(API, token)
+      .then(setMe)
+      .catch(() => { localStorage.removeItem("access_token"); setToken(""); setMe(null); });
   }, [token]);
 
-  useEffect(() => {
-    if (!me) return;
-    setMode(me.role === "driver" ? "driver" : me.role === "accountant" ? "accountant" : "driver");
-  }, [me]);
-
   const logout = () => { localStorage.removeItem("access_token"); setToken(""); setMe(null); };
-  const onLoggedIn = (t) => { setToken(t); };
+  const onLoggedIn = (tkn) => { localStorage.setItem("access_token", tkn); setToken(tkn); };
+
+  const Topbar = () => (
+    <div className="topbar">
+      <div className="brand">
+        <div className="logo">🧾</div>
+        <h1>Tax Intake</h1>
+      </div>
+
+      {/* Когда не авторизован — только переключатель темы. */}
+      {!me ? (
+        <div className="row">
+          <button className="secondary" onClick={() => setDark(v => !v)}>{dark ? "Light" : "Dark"}</button>
+        </div>
+      ) : (
+        <div className="row">
+          {/* Селектор года только для авторизованных */}
+          <select value={year} onChange={(e)=>setYear(Number(e.target.value))}>
+            {Array.from({length:3}).map((_,i)=> {
+              const y = new Date().getFullYear() - i;
+              return <option key={y} value={y}>{y}</option>;
+            })}
+          </select>
+          <button className="secondary" onClick={()=>setDark(v=>!v)}>{dark ? "Light" : "Dark"}</button>
+          <button onClick={logout}>Logout</button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className={dark ? "dark" : ""}>
       <div className="app">
-        <div className="topbar">
-          <div className="brand"><div className="logo">🧾</div><h1>Tax Intake</h1></div>
-          <div className="row">
-            <select value={year} onChange={(e)=>setYear(Number(e.target.value))}>
-              {Array.from({length:3}).map((_,i)=> {
-                const y = new Date().getFullYear() - i;
-                return <option key={y} value={y}>{y}</option>;
-              })}
-            </select>
-            <button className="secondary" onClick={()=>setDark(v=>!v)}>{dark ? "Light" : "Dark"}</button>
-            {me ? <button onClick={logout}>Logout</button> : (
-              <button onClick={async ()=>{
-                const email = prompt("Email"); if(!email) return;
-                const password = prompt("Password"); if(!password) return;
-                const tok = await login(API, email, password);
-                localStorage.setItem("access_token", tok.access_token);
-                setToken(tok.access_token);
-              }}>Login</button>
-            )}
-          </div>
-        </div>
+        <Topbar />
 
-        {!me && mode !== "register" && (
-          <div className="grid">
-            <div className="card">
-              <h2>Welcome</h2>
-              <div className="note">Login or create an account to continue.</div>
-              <div className="row" style={{marginTop:10}}>
-                <button onClick={()=>setMode("register")}>Create account</button>
-              </div>
-              <div className="divider"></div>
-              <div className="kv"><div className="k">API</div><div>{API}</div></div>
-            </div>
-          </div>
-        )}
+        {/* Не авторизован → показываем только две опции: Login / Register */}
+        {!me && <Auth API={API} onLoggedIn={onLoggedIn} />}
 
-        {!me && mode === "register" && <Register API={API} onLoggedIn={onLoggedIn} />}
-
+        {/* Авторизован: показываем рабочие кабинеты */}
         {me && me.role === "driver" && (
           <DriverFlow API={API} token={token} me={me} year={year} />
         )}
-
         {me && me.role === "accountant" && (
           <AccountantHome API={API} token={token} year={year} />
         )}
