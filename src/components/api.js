@@ -1,116 +1,104 @@
-// ===== Common helpers =====
+// --- Unified helpers ---
 export function authHeaders(token, extra = {}) {
-  return { Authorization: `Bearer ${token}`, ...extra };
+  return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
 }
 
-// 204/empty-body safe parser
+// Безопасно читаем JSON или текст/пустой ответ
 async function safeJson(res) {
-  if (res.status === 204) return null;
   const text = await res.text();
   if (!text) return null;
   try { return JSON.parse(text); } catch { return text; }
 }
 
-// ===== Generic JSON helpers =====
+// Превращаем fastapi/pydantic detail в строку
+export function errorText(payload) {
+  if (!payload) return "Request failed";
+  if (typeof payload === "string") return payload;
+  if (payload.detail) {
+    const d = payload.detail;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) {
+      // pydantic: [{loc:[..], msg:"...", type:"..."}]
+      return d.map(x => x.msg || JSON.stringify(x)).join("; ");
+    }
+    return JSON.stringify(d);
+  }
+  return JSON.stringify(payload);
+}
+
+// JSON GET
 export async function jget(url, token) {
   const r = await fetch(url, { headers: authHeaders(token) });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r);
 }
 
+// JSON POST (возвращает JSON или null для 204)
 export async function jpost(url, token, body) {
   const r = await fetch(url, {
     method: "POST",
     headers: authHeaders(token, { "Content-Type": "application/json" }),
-    body: JSON.stringify(body || {}),
+    body: body == null ? null : JSON.stringify(body),
   });
-  if (!r.ok) throw new Error(await r.text());
+  if (r.status === 204) return null;
+  if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r);
 }
 
-export async function jput(url, token, body) {
-  const r = await fetch(url, {
-    method: "PUT",
-    headers: authHeaders(token, { "Content-Type": "application/json" }),
-    body: JSON.stringify(body || {}),
-  });
-  if (!r.ok) throw new Error(await r.text());
-  return safeJson(r);
-}
-
+// multipart/form-data POST
 export async function formPost(url, token, formData) {
   const r = await fetch(url, { method: "POST", headers: authHeaders(token), body: formData });
-  if (!r.ok) throw new Error(await r.text());
+  if (r.status === 204) return null;
+  if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r);
 }
 
-// ===== Auth (added to fix the build) =====
+// ---- Auth short-hands ----
 
-// POST /auth/token -> returns access_token string
-export async function login(API, email, password) {
-  const r = await fetch(`${API}/auth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ username: email, password })
-  });
-  if (!r.ok) throw new Error(await r.text());
-  const data = await r.json(); // { access_token, token_type }
-  return data.access_token;
-}
-
-// POST /auth/register then auto-login -> returns access_token string
-export async function register(API, { email, name, password, role = "driver" }) {
-  // create user
-  const r = await fetch(`${API}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, name, password, role })
-  });
-  if (!r.ok) throw new Error(await r.text());
-  // then login
-  return login(API, email, password);
-}
-
-// ===== Domain helpers =====
 export async function fetchMe(API, token) {
   const r = await fetch(`${API}/auth/me`, { headers: authHeaders(token) });
-  if (!r.ok) throw new Error(await r.text());
+  if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r); // { id, email, name, role }
 }
 
-// Period status (single source of truth for flow_state)
-export const periodStatus = (API, token, userId, year) =>
-  jget(`${API}/api/v1/periods/status/${userId}/${year}`, token);
-
-// Firms
-export const listFirms   = (API, token) => jget(`${API}/api/v1/firms`, token);
-export const selectFirm  = (API, token, firmId) => jpost(`${API}/api/v1/firms/select/${firmId}`, token);
-
-// Business profiles
-export const listBusinessProfiles = (API, token, userId) =>
-  jget(`${API}/api/v1/business/profiles/${userId}`, token);
-
-export const createBusinessProfile = (API, token, payload) =>
-  jpost(`${API}/api/v1/business/profiles`, token, payload);
-
-// Expenses
-export const getExpenses = (API, token, businessProfileId, year) =>
-  jget(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`, token);
-
-export const saveExpenses = (API, token, businessProfileId, year, items) =>
-  jput(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`, token, { expenses: items });
-
-// Documents
-export const docsByDriver = (API, token, driverId) =>
-  jget(`${API}/api/v1/documents/by-driver/${driverId}`, token);
-
-export async function uploadDoc(API, token, driverId, year, code, file) {
-  const form = new FormData();
-  form.append("file", file);
-  const url = `${API}/api/v1/documents/upload/${driverId}?year=${year}&document_type_code=${encodeURIComponent(code)}`;
-  return formPost(url, token, form);
+// Бэкенд ждёт: { email, name, password, role? } — name обязателен!
+export async function register(API, { email, name, password, role = "driver" }) {
+  const r = await fetch(`${API}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name, password, role }),
+  });
+  if (!r.ok) throw new Error(errorText(await safeJson(r)));
+  return safeJson(r); // UserOut
 }
 
-// Payment stub
-export const submitPaymentStub = (API, token, year) =>
-  jpost(`${API}/api/v1/payment/submit-stub/${year}`, token, {});
+// OAuth2PasswordRequestForm: username=email, password
+export async function login(API, { email, password }) {
+  const body = new URLSearchParams();
+  body.set("username", email);
+  body.set("password", password);
+  const r = await fetch(`${API}/auth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body
+  });
+  if (!r.ok) throw new Error(errorText(await safeJson(r)));
+  return safeJson(r); // { access_token, token_type }
+}
+
+// ---- Driver flow API used elsewhere (оставляю как было) ----
+export async function periodStatus(API, token, userId, year) {
+  return jget(`${API}/api/v1/periods/status/${userId}/${year}`, token);
+}
+export async function listFirms(API, token) {
+  return jget(`${API}/api/v1/firms`, token);
+}
+export async function selectFirm(API, token, firmId) {
+  return jpost(`${API}/api/v1/firms/select/${firmId}`, token);
+}
+export async function getExpenses(API, token, businessProfileId, year) {
+  return jget(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`, token);
+}
+export async function saveExpenses(API, token, businessProfileId, year, expensesArray) {
+  return jpost(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`, token, { expenses: expensesArray });
+}
