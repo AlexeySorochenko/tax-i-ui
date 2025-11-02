@@ -1,16 +1,17 @@
-// Unified auth header
+// ===== Common helpers =====
 export function authHeaders(token, extra = {}) {
   return { Authorization: `Bearer ${token}`, ...extra };
 }
 
-// ---- safe JSON parser (handles 204 / empty body)
+// 204/empty-body safe parser
 async function safeJson(res) {
   if (res.status === 204) return null;
-  const text = await res.text();          // don't double-read body elsewhere
+  const text = await res.text();
   if (!text) return null;
   try { return JSON.parse(text); } catch { return text; }
 }
 
+// ===== Generic JSON helpers =====
 export async function jget(url, token) {
   const r = await fetch(url, { headers: authHeaders(token) });
   if (!r.ok) throw new Error(await r.text());
@@ -34,7 +35,7 @@ export async function jput(url, token, body) {
     body: JSON.stringify(body || {}),
   });
   if (!r.ok) throw new Error(await r.text());
-  return safeJson(r); // может вернуть null при 204 — это нормально
+  return safeJson(r);
 }
 
 export async function formPost(url, token, formData) {
@@ -43,15 +44,41 @@ export async function formPost(url, token, formData) {
   return safeJson(r);
 }
 
-// ---- domain helpers (используются драйверским флоу)
+// ===== Auth (added to fix the build) =====
 
+// POST /auth/token -> returns access_token string
+export async function login(API, email, password) {
+  const r = await fetch(`${API}/auth/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ username: email, password })
+  });
+  if (!r.ok) throw new Error(await r.text());
+  const data = await r.json(); // { access_token, token_type }
+  return data.access_token;
+}
+
+// POST /auth/register then auto-login -> returns access_token string
+export async function register(API, { email, name, password, role = "driver" }) {
+  // create user
+  const r = await fetch(`${API}/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, name, password, role })
+  });
+  if (!r.ok) throw new Error(await r.text());
+  // then login
+  return login(API, email, password);
+}
+
+// ===== Domain helpers =====
 export async function fetchMe(API, token) {
   const r = await fetch(`${API}/auth/me`, { headers: authHeaders(token) });
   if (!r.ok) throw new Error(await r.text());
   return safeJson(r); // { id, email, name, role }
 }
 
-// Period status (source of truth)
+// Period status (single source of truth for flow_state)
 export const periodStatus = (API, token, userId, year) =>
   jget(`${API}/api/v1/periods/status/${userId}/${year}`, token);
 
