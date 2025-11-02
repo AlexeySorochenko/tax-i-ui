@@ -1,5 +1,8 @@
 // ==== HTTP helpers & API ====
 
+// Добавь VITE_API_BASE в .env, если нужно переопределять
+export const API_BASE = import.meta.env.VITE_API_BASE || "https://tax-i.onrender.com";
+
 export function authHeaders(token, extra = {}) {
   return token ? { Authorization: `Bearer ${token}`, ...extra } : { ...extra };
 }
@@ -48,14 +51,15 @@ export async function formPost(url, token, formData) {
 
 // ---- auth ----
 export async function fetchMe(API, token) {
-  const r = await fetch(`${API}/auth/me`, { headers: authHeaders(token) });
+  const base = API || API_BASE;
+  const r = await fetch(`${base}/auth/me`, { headers: authHeaders(token) });
   if (!r.ok) throw new Error(errorText(await safeJson(r)));
-  return safeJson(r); // { id, email, name, role } (name может быть собран на бэке)
+  return safeJson(r); // { id, email, first_name, last_name, ... , role }
 }
 
-// ВАЖНО: регистрируем по новой схеме (first_name, last_name, patronymic, phone)
+// Расширенная схема регистрации
 export async function register(API, payload) {
-  // payload: { email, phone, first_name, last_name, patronymic, password, role? }
+  const base = API || API_BASE;
   const body = {
     email: payload.email,
     phone: payload.phone,
@@ -65,20 +69,21 @@ export async function register(API, payload) {
     password: payload.password,
     role: payload.role || "driver",
   };
-  const r = await fetch(`${API}/auth/register`, {
+  const r = await fetch(`${base}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(errorText(await safeJson(r)));
-  return safeJson(r); // created user
+  return safeJson(r);
 }
 
 export async function login(API, { email, password }) {
+  const base = API || API_BASE;
   const body = new URLSearchParams();
   body.set("username", email);
   body.set("password", password);
-  const r = await fetch(`${API}/auth/token`, {
+  const r = await fetch(`${base}/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body
@@ -86,3 +91,21 @@ export async function login(API, { email, password }) {
   if (!r.ok) throw new Error(errorText(await safeJson(r)));
   return safeJson(r); // { access_token, token_type }
 }
+
+// ---- driver flow ----
+export async function periodStatus(API, token, userId, year) {
+  const base = API || API_BASE;
+  return jget(`${base}/api/v1/periods/status/${userId}/${year}`, token);
+}
+
+export async function listFirms(API, token) {
+  const base = API || API_BASE;
+  return jget(`${base}/api/v1/firms`, token);
+}
+
+export async function selectFirm(API, token, firmId) {
+  const base = API || API_BASE;
+  return jpost(`${base}/api/v1/firms/select/${firmId}`, token);
+}
+
+// (при необходимости добавляй и другие вызовы сюда)
