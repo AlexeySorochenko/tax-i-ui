@@ -11,6 +11,7 @@ export default function App() {
   const [me, setMe] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear());
   const [dark, setDark] = useState(false);
+  const [authView, setAuthView] = useState(null); // null | 'login' | 'register'
 
   useEffect(() => {
     if (!token) { setMe(null); return; }
@@ -20,7 +21,7 @@ export default function App() {
   }, [token]);
 
   const logout = () => { localStorage.removeItem("access_token"); setToken(""); setMe(null); };
-  const onLoggedIn = (tkn) => { localStorage.setItem("access_token", tkn); setToken(tkn); };
+  const onLoggedIn = (tkn) => { localStorage.setItem("access_token", tkn); setToken(tkn); setAuthView(null); };
 
   const Topbar = () => (
     <div className="topbar">
@@ -29,14 +30,14 @@ export default function App() {
         <h1>Tax Intake</h1>
       </div>
 
-      {/* Когда не авторизован — только переключатель темы. */}
+      {/* НЕ авторизован → только переключатель темы */}
       {!me ? (
         <div className="row">
           <button className="secondary" onClick={() => setDark(v => !v)}>{dark ? "Light" : "Dark"}</button>
         </div>
       ) : (
         <div className="row">
-          {/* Селектор года только для авторизованных */}
+          {/* Селектор года только после входа */}
           <select value={year} onChange={(e)=>setYear(Number(e.target.value))}>
             {Array.from({length:3}).map((_,i)=> {
               const y = new Date().getFullYear() - i;
@@ -50,15 +51,30 @@ export default function App() {
     </div>
   );
 
+  // ----- Экран приветствия (две опции) -----
+  const Welcome = () => (
+    <div className="grid" style={{ maxWidth: 640, margin: "24px auto" }}>
+      <div className="card">
+        <h2>Welcome</h2>
+        <div className="note" style={{marginTop:6}}>Login or create an account to continue.</div>
+        <div className="row" style={{gap:12, marginTop:16, flexWrap:"wrap"}}>
+          <button onClick={()=>setAuthView("login")}>Login</button>
+          <button className="secondary" onClick={()=>setAuthView("register")}>Create account</button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className={dark ? "dark" : ""}>
       <div className="app">
         <Topbar />
 
-        {/* Не авторизован → показываем только две опции: Login / Register */}
-        {!me && <Auth API={API} onLoggedIn={onLoggedIn} />}
+        {!me && (authView
+          ? <Auth API={API} defaultTab={authView} onLoggedIn={onLoggedIn} onBack={() => setAuthView(null)} />
+          : <Welcome />
+        )}
 
-        {/* Авторизован: показываем рабочие кабинеты */}
         {me && me.role === "driver" && (
           <DriverFlow API={API} token={token} me={me} year={year} />
         )}
