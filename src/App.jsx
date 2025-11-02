@@ -1,102 +1,106 @@
-import React, { useState } from "react";
-import Login from "./components/Login.jsx";
-import Drivers from "./components/Drivers.jsx";
-import DriverDetail from "./components/DriverDetail.jsx";
-import DriverSelf from "./components/DriverSelf.jsx";
-import BusinessPanel from "./components/BusinessPanel.jsx";
-import ThemeToggle from "./components/ThemeToggle.jsx";
-import { fetchMe } from "./components/api.js";
+import React, { useEffect, useMemo, useState } from "react";
+import { fetchMe } from "./components/api";
+import DriverHome from "./components/DriverHome";
+import AccountantHome from "./components/AccountantHome";
+import Onboarding from "./components/Onboarding";
 
-const API = import.meta.env.VITE_API_BASE || "http://localhost:8000";
+const API = import.meta.env.VITE_API || "https://tax-i.onrender.com";
 
 export default function App() {
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState(() => localStorage.getItem("access_token") || "");
   const [me, setMe] = useState(null);
-  const [driver, setDriver] = useState(null);
-  const [error, setError] = useState(null);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [tab, setTab] = useState("auto"); // auto → choose based on role
+  const [dark, setDark] = useState(false);
 
-  const [driverTab, setDriverTab] = useState("intro"); // intro | documents | business
-
-  const onLoggedIn = async (tok) => {
-    setToken(tok);
-    setError(null);
-    try {
-      const user = await fetchMe(API, tok);
-      setMe(user);
-      setDriverTab(user.role === "driver" ? "intro" : "documents");
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  useEffect(() => {
+    if (!token) return;
+    let alive = true;
+    fetchMe(API, token)
+      .then((m) => { if (alive) setMe(m); })
+      .catch(() => { localStorage.removeItem("access_token"); setToken(""); setMe(null); });
+    return () => { alive = false; };
+  }, [token]);
 
   const logout = () => {
-    setToken(null); setMe(null); setDriver(null); setError(null); setDriverTab("intro");
+    localStorage.removeItem("access_token");
+    setToken("");
+    setMe(null);
   };
 
-  return (
-    <div className="app">
-      <div className="topbar">
-        <div className="brand">
-          <div className="logo">🧾</div>
-          <h1>Tax Intake</h1>
-        </div>
-        <div className="row">
-          <ThemeToggle />
-          <span className="note">{API}</span>
-          {token && <button className="secondary" onClick={logout}>Logout</button>}
+  const roleTab = useMemo(() => {
+    if (!me) return "login";
+    if (me.role === "driver") return "driver";
+    if (me.role === "accountant") return "accountant";
+    return "login";
+  }, [me]);
+
+  const effectiveTab = tab === "auto" ? roleTab : tab;
+
+  if (!me) {
+    return (
+      <div className={dark ? "dark" : ""}>
+        <div className="app">
+          <div className="topbar">
+            <div className="brand"><div className="logo">🧾</div><h1>Tax Intake</h1></div>
+            <div className="row">
+              <button className="secondary" onClick={() => setDark(v => !v)}>{dark ? "Light" : "Dark"}</button>
+            </div>
+          </div>
+          <div className="grid">
+            <div className="card">
+              <h2>You're not logged in</h2>
+              <div className="note">Open the login page of your backend UI and sign in. This frontend reads the token from localStorage.</div>
+              <div className="divider"></div>
+              <div className="kv">
+                <div className="k">Token</div>
+                <input placeholder="Paste access token here…" onChange={(e)=>{localStorage.setItem("access_token", e.target.value); setToken(e.target.value);}} />
+                <div className="k">API</div>
+                <div>{API}</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
+    );
+  }
 
-      {!token && <div className="card"><Login API={API} onLoggedIn={onLoggedIn} /></div>}
-
-      {token && me?.role === "accountant" && !driver && (
-        <div className="grid"><div className="card"><Drivers API={API} token={token} onPick={(d) => setDriver(d)} /></div></div>
-      )}
-      {token && me?.role === "accountant" && driver && (
-        <div className="grid"><div className="card"><DriverDetail API={API} token={token} driver={driver} onBack={() => setDriver(null)} /></div></div>
-      )}
-
-      {token && me?.role === "driver" && (
-        <div className="grid">
-          {/* intro hero */}
-          {driverTab === "intro" && (
-            <div className="card hero">
-              <h2 style={{marginTop:0}}>Welcome, {me.email}</h2>
-              <p className="note">Step 1 — upload your required documents. Step 2 — answer a few questions about business expenses.</p>
-              <div className="tilegrid" style={{marginTop:8}}>
-                <div className="tile">
-                  <div><h3>Documents</h3><div className="note">Personal & tax documents</div></div>
-                  <button className="primary" onClick={() => setDriverTab("documents")}>Open</button>
-                </div>
-                <div className="tile">
-                  <div><h3>Business</h3><div className="note">Guided expense interview</div></div>
-                  <button className="primary" onClick={() => setDriverTab("business")}>Open</button>
-                </div>
-              </div>
+  return (
+    <div className={dark ? "dark" : ""}>
+      <div className="app">
+        <div className="topbar">
+          <div className="brand">
+            <div className="logo">🧾</div>
+            <div>
+              <h1>Tax Intake</h1>
+              <div className="note">{API}</div>
             </div>
-          )}
-
-          {/* tabs */}
-          {driverTab !== "intro" && (
-            <div className="card">
-              <div className="row spread">
-                <div className="tabbar">
-                  <button className={driverTab === "documents" ? "active" : ""} onClick={() => setDriverTab("documents")}>Documents</button>
-                  <button className={driverTab === "business" ? "active" : ""} onClick={() => setDriverTab("business")}>Business</button>
-                </div>
-                <span className="badge">{me.email}</span>
-              </div>
-            </div>
-          )}
-
-          {driverTab === "documents" && (<div className="card"><DriverSelf API={API} token={token} me={me} /></div>)}
-          {driverTab === "business" && (<BusinessPanel API={API} token={token} me={me} />)}
+          </div>
+          <div className="row">
+            <select value={year} onChange={(e)=>setYear(Number(e.target.value))}>
+              {Array.from({length:3}).map((_,k)=> {
+                const y = new Date().getFullYear() - k;
+                return <option key={y} value={y}>{y}</option>;
+              })}
+            </select>
+            <button className="secondary" onClick={() => setDark(v=>!v)}>{dark ? "Light" : "Dark"}</button>
+            <button onClick={logout}>Logout</button>
+          </div>
         </div>
-      )}
 
-      {error && <div className="alert" style={{ marginTop: 12 }}>{String(error)}</div>}
+        {/* навигация по ролям */}
+        {effectiveTab === "driver" && (
+          <DriverHome API={API} token={token} me={me} year={year} />
+        )}
+        {effectiveTab === "accountant" && (
+          <AccountantHome API={API} token={token} year={year} />
+        )}
 
-      <div className="footer" />
+        {/* онбординг для водителя без связки/профиля */}
+        {effectiveTab === "driver" && (
+          <Onboarding API={API} token={token} me={me} />
+        )}
+      </div>
     </div>
   );
 }
