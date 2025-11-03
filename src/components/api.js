@@ -1,21 +1,55 @@
-// Универсальные вызовы API, совместимые с новой "умной" схемой расходов.
+// Универсальные вызовы API + хелперы, совместимые со старым DriverSelf.jsx
 
-const asJson = async (res) => {
+/* ========== базовые хелперы ========== */
+export const authHeaders = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
+
+export const asJson = async (res) => {
   if (!res.ok) {
     let detail = await res.text();
-    try { const j = JSON.parse(detail); detail = j.detail || detail; } catch {}
+    try {
+      const j = JSON.parse(detail);
+      detail = j.detail || detail;
+    } catch {}
     const err = new Error(detail || `${res.status} ${res.statusText}`);
     err.status = res.status;
     throw err;
   }
   const txt = await res.text();
-  try { return txt ? JSON.parse(txt) : null; } catch { return txt; }
+  try {
+    return txt ? JSON.parse(txt) : null;
+  } catch {
+    return txt;
+  }
 };
 
-const authHeaders = (token) => token ? { "Authorization": `Bearer ${token}` } : {};
+// Добавляет query-параметры к URL
+export const withQuery = (base, params = {}) => {
+  const url = new URL(base, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+  });
+  return url.toString();
+};
+
+// Простой GET с токеном
+export async function jget(url, token) {
+  const res = await fetch(url, { headers: { ...authHeaders(token) } });
+  return asJson(res);
+}
+
+// POST/PUT c FormData (для загрузок и т.п.)
+export async function formPost(url, token, formData, method = "POST") {
+  const res = await fetch(url, {
+    method,
+    headers: { ...authHeaders(token) }, // без Content-Type — браузер сам поставит multipart boundary
+    body: formData,
+  });
+  return asJson(res);
+}
+
+/* ========== аутентификация ========== */
 
 export async function register(API, payload, inviteCode) {
-  // POST /auth/register (driver) — JSON
   const url = new URL(`${API}/auth/register`);
   if (inviteCode) url.searchParams.set("invite_code", inviteCode);
   const res = await fetch(url, {
@@ -27,7 +61,7 @@ export async function register(API, payload, inviteCode) {
 }
 
 export async function login(API, { email, password }) {
-  // POST /auth/token — x-www-form-urlencoded (username/password)
+  // FastAPI OAuth2 — form-urlencoded
   const form = new URLSearchParams();
   form.set("username", email);
   form.set("password", password);
@@ -44,11 +78,13 @@ export async function me(API, token) {
   return asJson(res);
 }
 
-/* ===== Маркетплейс фирм ===== */
+/* ========== фирмы (маркетплейс) ========== */
+
 export async function listFirms(API, token) {
   const res = await fetch(`${API}/api/v1/firms`, { headers: { ...authHeaders(token) } });
   return asJson(res);
 }
+
 export async function selectFirm(API, token, firmId) {
   const res = await fetch(`${API}/api/v1/firms/select/${firmId}`, {
     method: "POST",
@@ -57,7 +93,8 @@ export async function selectFirm(API, token, firmId) {
   return asJson(res);
 }
 
-/* ===== Период/флоу водителя ===== */
+/* ========== период/флоу водителя ========== */
+
 export async function periodStatus(API, token, driverUserId, year) {
   const res = await fetch(`${API}/api/v1/periods/status/${driverUserId}/${year}`, {
     headers: { ...authHeaders(token) },
@@ -65,13 +102,15 @@ export async function periodStatus(API, token, driverUserId, year) {
   return asJson(res);
 }
 
-/* ===== Персональный профиль ===== */
+/* ========== персональный профиль ========== */
+
 export async function getPersonal(API, token, userId) {
   const res = await fetch(`${API}/api/v1/profiles/personal/${userId}`, {
     headers: { ...authHeaders(token) },
   });
   return asJson(res);
 }
+
 export async function putPersonal(API, token, userId, payload) {
   const res = await fetch(`${API}/api/v1/profiles/personal/${userId}`, {
     method: "PUT",
@@ -81,7 +120,8 @@ export async function putPersonal(API, token, userId, payload) {
   return asJson(res);
 }
 
-/* ===== Бизнес-профили и расходы ===== */
+/* ========== бизнес-профили и «умные» расходы ========== */
+
 export async function getBusinessProfiles(API, token, userId) {
   const res = await fetch(`${API}/api/v1/business/profiles/${userId}`, {
     headers: { ...authHeaders(token) },
@@ -89,8 +129,8 @@ export async function getBusinessProfiles(API, token, userId) {
   return asJson(res);
 }
 
+// business_code: "TAXI" | "TRUCK"
 export async function createBusinessProfile(API, token, { name, business_code }) {
-  // business_code: "TAXI" | "TRUCK"
   const res = await fetch(`${API}/api/v1/business/profiles`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
@@ -99,11 +139,12 @@ export async function createBusinessProfile(API, token, { name, business_code })
   return asJson(res);
 }
 
+// новый режим: ?mode=full возвращает схему+данные
 export async function getBusinessExpenses(API, token, businessProfileId, year, { full = true } = {}) {
   const url = new URL(`${API}/api/v1/business/${businessProfileId}/expenses/${year}`);
   if (full) url.searchParams.set("mode", "full");
   const res = await fetch(url, { headers: { ...authHeaders(token) } });
-  return asJson(res); // ожидаем массив [{code,label,amount,hint,order,is_custom,ui_rules:{...}}]
+  return asJson(res);
 }
 
 export async function putBusinessExpenses(API, token, businessProfileId, year, expenses) {
@@ -112,7 +153,7 @@ export async function putBusinessExpenses(API, token, businessProfileId, year, e
     headers: { "Content-Type": "application/json", ...authHeaders(token) },
     body: JSON.stringify({ expenses }),
   });
-  // 204 No Content — вернёт null → ок
+  // 204 No Content → вернётся null, это ок
   return asJson(res);
 }
 
@@ -120,10 +161,21 @@ export async function getBusinessSummary(API, token, businessProfileId, year) {
   const res = await fetch(`${API}/api/v1/business/${businessProfileId}/summary/${year}`, {
     headers: { ...authHeaders(token) },
   });
-  return asJson(res); // { total, categories:[{code,label,amount}], filled, missing, ... }
+  return asJson(res);
 }
 
-/* ===== Платёж-заглушка (submit) ===== */
+/* ========== документы/загрузка (DriverSelf использует эти хелперы) ========== */
+
+// Примером: presigned download url
+export async function getDocumentDownloadUrl(API, token, documentId) {
+  const res = await fetch(`${API}/api/v1/documents/download-url/${documentId}`, {
+    headers: { ...authHeaders(token) },
+  });
+  return asJson(res);
+}
+
+/* ========== платёж-заглушка ========== */
+
 export async function submitPaymentStub(API, token, year) {
   const res = await fetch(`${API}/api/v1/payment/submit-stub/${year}`, {
     method: "POST",
