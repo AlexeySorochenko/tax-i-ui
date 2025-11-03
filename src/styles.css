@@ -242,4 +242,41 @@ tbody tr:hover{background:rgba(0,0,0,.02)}
 .firmPrice{ font-weight:600; margin-top:2px; }
 .firmAct{ display:flex; align-items:end; }
 
+/* --- Mobile-first форма --- */
+:root {
+  --gap: 12px;
+}
+html, body, #root { width: 100%; overflow-x: hidden; }  /* убираем горизонтальный скролл */
+
+.card { max-width: 900px; margin: 0 auto; }             /* контейнер не расползается */
+
+.kv {
+  display: grid;
+  grid-template-columns: 1fr 2fr;   /* десктоп: label + input */
+  gap: var(--gap);
+  align-items: center;
+}
+.kv .k { font-weight: 600; }
+
+.kv input, .kv select, .kv textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Мобильная колонка */
+@media (max-width: 640px) {
+  .kv {
+    grid-template-columns: 1fr;     /* одна колонка */
+  }
+  .kv .k { margin-top: 6px; }
+  .row { flex-wrap: wrap; }
+  .row .primary, .row .secondary, .row button {
+    width: 100%;
+  }
+}
+
+/* Кнопочные чипы – не ломают строку на мобилке */
+.row.chips { gap: 8px; flex-wrap: wrap; }
+
+
 
