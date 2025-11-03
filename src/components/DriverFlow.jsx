@@ -7,52 +7,48 @@ import {
   createBusinessProfile,
   getBusinessExpenses,
   putBusinessExpenses,
+  getBusinessSummary,
   submitPaymentStub,
 } from "../components/api";
 import Onboarding from "./Onboarding";
 import DriverSelf from "./DriverSelf";
-import ExpenseWizard from "./ExpenseWizard"; // используем ваш визард расходов
+import ExpenseWizard from "./ExpenseWizard";
 
 /**
- * Состояния флоу по /periods/status:
- *  - NEEDS_FIRM        → выбор фирмы
- *  - NEEDS_PROFILE     → авто-открываем форму профиля (шаг 2 онбординга)
- *  - (локально) expenses → ExpenseWizard (опросник расходов)
- *  - NEEDS_DOCUMENTS   → чек-лист документов
- *  - NEEDS_PAYMENT     → оплата/отправка
- *  - IN_REVIEW         → статус + чат (чат доступен ТОЛЬКО здесь)
+ * Flow:
+ * NEEDS_FIRM → NEEDS_PROFILE → (subview: expenses) → (subview: summary) → NEEDS_DOCUMENTS → NEEDS_PAYMENT → IN_REVIEW (чат)
  */
 export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
   const [flow, setFlow] = useState(null);
   const [err, setErr] = useState("");
   const [firms, setFirms] = useState([]);
-  const [subview, setSubview] = useState(null); // "profile" | "expenses" | "documents" | "chat" | null
+  const [subview, setSubview] = useState(null); // "profile" | "expenses" | "summary" | "documents" | "chat" | null
 
-  // ---- состояние для визарда расходов (хуки на верхнем уровне)
+  // Состояние визарда расходов
   const [expBusy, setExpBusy] = useState(false);
   const [expSaving, setExpSaving] = useState(false);
   const [expError, setExpError] = useState("");
-  const [expBiz, setExpBiz] = useState(null);     // { id, ... }
-  const [expItems, setExpItems] = useState([]);   // [{ code, label, amount }]
+  const [expBiz, setExpBiz] = useState(null);
+  const [expItems, setExpItems] = useState([]);
+
+  // Состояние Summary
+  const [sumBusy, setSumBusy] = useState(false);
+  const [summary, setSummary] = useState(null);
+  const [sumError, setSumError] = useState("");
 
   async function refresh() {
-    setLoading(true);
-    setErr("");
+    setLoading(true); setErr("");
     try {
       const st = await periodStatus(API, token, me?.id, year);
       setFlow(st?.flow_state || "NEEDS_FIRM");
     } catch (e) {
-      setErr(String(e?.message || e));
-      setFlow(null);
-    } finally {
-      setLoading(false);
-    }
+      setErr(String(e?.message || e)); setFlow(null);
+    } finally { setLoading(false); }
   }
-
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [year]);
 
-  // Подгружаем фирмы при NEEDS_FIRM
+  // Загрузка фирм
   useEffect(() => {
     if (flow === "NEEDS_FIRM") {
       listFirms(API, token)
@@ -62,35 +58,31 @@ export default function DriverFlow({ API, token, me, year }) {
     // eslint-disable-next-line
   }, [flow]);
 
-  // Авто-открываем профиль ОДИН РАЗ
+  // Открываем онбординг профиля один раз
   useEffect(() => {
-    if (flow === "NEEDS_PROFILE" && subview == null) {
-      setSubview("profile");
-    }
+    if (flow === "NEEDS_PROFILE" && subview == null) setSubview("profile");
   }, [flow, subview]);
 
-  // При входе в экран расходов — гарантируем бизнес-профиль и тянем расходы
+  // Подготовка визарда расходов: бизнес-профиль + список расходов (mode=full)
   useEffect(() => {
     let alive = true;
     async function loadExpenses() {
       setExpBusy(true); setExpError("");
       try {
-        // 1) бизнес-профиль
+        // 1) берём/создаем бизнес-профиль
         const list = await getBusinessProfiles(API, token, me.id);
         let bp = (Array.isArray(list) && list[0]) || null;
         if (!bp) {
-          bp = await createBusinessProfile(API, token, {
-            name: "My Business",
-            business_code: "TAXI_EXPENSES",
-          });
+          // по умолчанию используем TAXI; если нужна развилка Taxi/Truck — добавим позже отдельным шагом
+          bp = await createBusinessProfile(API, token, { name: "My Business", business_code: "TAXI" });
         }
         if (!alive) return;
         setExpBiz(bp);
 
-        // 2) расходы за год
-        const ex = await getBusinessExpenses(API, token, bp.id, year);
+        // 2) тянем новый "умный" список
+        const full = await getBusinessExpenses(API, token, bp.id, year, { full: true });
         if (!alive) return;
-        setExpItems(Array.isArray(ex) ? ex : []);
+        setExpItems(Array.isArray(full) ? full : []);
       } catch (e) {
         if (!alive) return;
         setExpError(String(e?.message || e));
@@ -98,23 +90,43 @@ export default function DriverFlow({ API, token, me, year }) {
         if (alive) setExpBusy(false);
       }
     }
-    if (subview === "expenses") {
-      loadExpenses();
-    }
+    if (subview === "expenses") loadExpenses();
     return () => { alive = false; };
     // eslint-disable-next-line
   }, [subview, year]);
 
+  // Загрузка бизнес-сводки после визарда
+  useEffect(() => {
+    let alive = true;
+    async function loadSummary() {
+      if (!expBiz) return;
+      setSumBusy(true); setSumError(""); setSummary(null);
+      try {
+        const sum = await getBusinessSummary(API, token, expBiz.id, year);
+        if (!alive) return;
+        setSummary(sum || null);
+      } catch (e) {
+        if (!alive) return;
+        setSumError(String(e?.message || e));
+      } finally {
+        if (alive) setSumBusy(false);
+      }
+    }
+    if (subview === "summary" && expBiz?.id) loadSummary();
+    return () => { alive = false; };
+    // eslint-disable-next-line
+  }, [subview, expBiz, year]);
+
   async function choose(firmId) {
     try {
       await selectFirm(API, token, firmId);
-      await refresh(); // backend → NEEDS_PROFILE → откроется форма
+      await refresh(); // бэк переключит на NEEDS_PROFILE
     } catch (e) {
       alert(String(e?.message || e));
     }
   }
 
-  // Сохранение одной строки расходов
+  // Сохранение одной позиции расходов (посылаем весь снапшот из визарда выше в DriverFlow)
   async function onSaveOneExpense(code, amountOrNull) {
     if (!expBiz) return;
     setExpSaving(true); setExpError("");
@@ -123,7 +135,11 @@ export default function DriverFlow({ API, token, me, year }) {
       setExpItems(next);
       await putBusinessExpenses(
         API, token, expBiz.id, year,
-        next.map(i => ({ code: i.code, amount: i.amount ?? 0 }))
+        next.map(i => {
+          const payload = { code: i.code, amount: i.amount ?? 0 };
+          if (i.is_custom) { payload.is_custom = true; if (i.custom_label) payload.custom_label = i.custom_label; }
+          return payload;
+        })
       );
     } catch (e) {
       setExpError(String(e?.message || e));
@@ -132,7 +148,8 @@ export default function DriverFlow({ API, token, me, year }) {
     }
   }
 
-  // ====== Сабвью (без роутинга) ======
+  /* ===== Сабвью ===== */
+
   if (subview === "profile") {
     return (
       <Onboarding
@@ -140,7 +157,7 @@ export default function DriverFlow({ API, token, me, year }) {
         token={token}
         me={me}
         initialStep={2}
-        onDoneNext={() => { setSubview("expenses"); }} // после профиля → визард расходов
+        onDoneNext={() => { setSubview("expenses"); }} // → визард расходов
       />
     );
   }
@@ -157,7 +174,7 @@ export default function DriverFlow({ API, token, me, year }) {
               items={expItems}
               saving={expSaving}
               onSaveOne={onSaveOneExpense}
-              onFinished={() => setSubview("documents")} // после «Finish» → документы
+              onFinished={() => setSubview("summary")} // после визарда → сводка
             />
           )
         }
@@ -165,11 +182,60 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
-  // ЧАТ — только ПОСЛЕ ОПЛАТЫ (т.е. только при flow === "IN_REVIEW")
+  if (subview === "summary") {
+    return (
+      <div className="card">
+        <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ margin: 0 }}>Business summary — {year}</h2>
+          <div className="note">{expBiz?.name || ""}</div>
+        </div>
+
+        {sumError && <div className="alert" style={{ marginTop: 8 }}>{sumError}</div>}
+        {sumBusy && <div className="note" style={{ marginTop: 8 }}>Loading…</div>}
+
+        {!sumBusy && summary && (
+          <div style={{ marginTop: 12 }}>
+            <div className="tile" style={{ alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontWeight: 700 }}>Total</div>
+              <div style={{ marginLeft: "auto", fontWeight: 700 }}>${Number(summary.total || 0).toFixed(2)}</div>
+            </div>
+
+            <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8 }}>
+              {(summary.categories || []).map((c) => (
+                <div key={c.code} className="tile" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+                  <div>{c.label || c.code}</div>
+                  <div style={{ fontWeight: 600 }}>${Number(c.amount || 0).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="note" style={{ marginTop: 8 }}>
+              Filled: <b>{summary.filled ?? 0}</b> • Missing: <b>{summary.missing ?? 0}</b> • Custom: <b>{summary.has_custom ? "Yes" : "No"}</b>
+            </div>
+
+            <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
+              <button className="secondary" onClick={() => setSubview("expenses")}>Edit</button>
+              <button className="primary" onClick={() => setSubview("documents")} style={{ marginLeft: 8 }}>Proceed</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Чеклист документов
+  if (subview === "documents") {
+    return (
+      <div className="card">
+        <DriverSelf API={API} token={token} me={me} />
+      </div>
+    );
+  }
+
+  // Чат — только после оплаты
   if (subview === "chat") {
     if (flow !== "IN_REVIEW") {
-      // защита: если кто-то вдруг дернул setSubview("chat") раньше — игнорируем
-      setSubview(null);
+      setSubview(null); // защита
     } else {
       return (
         <div className="card">
@@ -185,15 +251,8 @@ export default function DriverFlow({ API, token, me, year }) {
     }
   }
 
-  if (subview === "documents") {
-    return (
-      <div className="card">
-        <DriverSelf API={API} token={token} me={me} />
-      </div>
-    );
-  }
+  /* ===== Основные состояния по flow ===== */
 
-  // ====== Основные состояния ======
   function priceBadge(pricing) {
     if (!pricing) return null;
     const v = Number(pricing?.tax_return) || Number(pricing?.base);
@@ -214,15 +273,9 @@ export default function DriverFlow({ API, token, me, year }) {
               <div key={f.id} className="tile" style={{ alignItems: "flex-start" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, marginBottom: 4, wordBreak: "break-word" }}>{f.name}</div>
-                  {f.avg_rating != null && (
-                    <span className="badge" style={{ marginRight: 8 }}>★ {Number(f.avg_rating).toFixed(1)}</span>
-                  )}
-                  {priceBadge(f.services_pricing) && (
-                    <span className="badge">{priceBadge(f.services_pricing)}</span>
-                  )}
-                  {f.description && (
-                    <div className="note" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{f.description}</div>
-                  )}
+                  {f.avg_rating != null && (<span className="badge" style={{ marginRight: 8 }}>★ {Number(f.avg_rating).toFixed(1)}</span>)}
+                  {priceBadge(f.services_pricing) && (<span className="badge">{priceBadge(f.services_pricing)}</span>)}
+                  {f.description && (<div className="note" style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{f.description}</div>)}
                 </div>
                 <button className="secondary rightChip" onClick={() => choose(f.id)}>Choose</button>
               </div>
@@ -246,14 +299,13 @@ export default function DriverFlow({ API, token, me, year }) {
           <h2>Submit for review</h2>
           <p>All documents are ready. Please submit to your accountant.</p>
           <div className="row" style={{ gap: 8 }}>
-            {/* ЧАТА ЗДЕСЬ НЕТ — он появится только после успешного сабмита */}
+            {/* ЧАТА здесь нет — появится после успешного Submit */}
             <button
               className="primary"
               onClick={async () => {
                 try {
                   await submitPaymentStub(API, token, year);
-                  await refresh();          // ожидаем переход в IN_REVIEW
-                  // После refresh() в IN_REVIEW уже появится кнопка «Open chat»
+                  await refresh(); // ожидается переход в IN_REVIEW
                 } catch (e) {
                   alert(String(e));
                 }
@@ -271,7 +323,6 @@ export default function DriverFlow({ API, token, me, year }) {
           <h2>In review</h2>
           <div className="note">Your accountant is reviewing your documents.</div>
           <div className="row" style={{ gap: 8, marginTop: 8 }}>
-            {/* Теперь чат доступен */}
             <button onClick={() => setSubview("chat")}>Open chat</button>
             <button className="secondary" onClick={() => setSubview("documents")}>View documents</button>
           </div>
