@@ -9,17 +9,19 @@ import React, { useEffect, useMemo, useState } from "react";
  *  - onGoToFirms?: () => void
  */
 export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished, onGoToFirms }) {
-  // сортируем по order, но сохраняем исходный набор полей
+  // Состав шагов — по order
   const sorted = useMemo(() => {
     const arr = Array.isArray(items) ? [...items] : [];
     arr.sort((a, b) => (a?.order ?? 0) - (b?.order ?? 0));
     return arr;
   }, [items]);
 
+  // Ключ по составу (только список кодов). Если состав не менялся — не сбрасываем шаги.
+  const codesKey = useMemo(() => (sorted || []).map(i => i.code).join("|"), [sorted]);
+
   const totalSteps = (sorted || []).length || 1;
   const [step, setStep] = useState(0);
 
-  // локальные значения + ответ да/нет
   const [local, setLocal] = useState(() =>
     (sorted || []).map(x => ({ ...x, tempAmount: x.amount ?? "" }))
   );
@@ -27,11 +29,13 @@ export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished,
     (sorted || []).map(x => (x.amount != null ? true : null))
   );
 
+  // Инициализация только при смене СОСТАВА шагов
   useEffect(() => {
     setLocal((sorted || []).map(x => ({ ...x, tempAmount: x.amount ?? "" })));
     setAnswerYes((sorted || []).map(x => (x.amount != null ? true : null)));
     setStep(0);
-  }, [sorted]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codesKey]); // не реагируем на изменения amount/подобных пропсов
 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -88,7 +92,6 @@ export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished,
         if (inputMode === "integer") num = Math.round(num);
         await onSaveOne?.(code, num);
       } else {
-        // не ответили — трактуем как "нет"
         await onSaveOne?.(code, null);
       }
     } catch (e) {
@@ -112,60 +115,31 @@ export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished,
 
   return (
     <div className="card">
-      {/* ---------- ШАПКА ---------- */}
+      {/* ШАПКА */}
       <div className="row" style={{ alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ fontSize: 18, fontWeight: 700 }}>Expense interview — {year}</div>
-        <div style={{
-          fontSize: 12,
-          padding: "4px 10px",
-          background: "var(--chip-bg, rgba(0,0,0,0.06))",
-          borderRadius: 9999,
-        }}>
+        <div style={{ fontSize: 12, padding: "4px 10px", background: "var(--chip-bg, rgba(0,0,0,0.06))", borderRadius: 9999 }}>
           Step {Math.min(step + 1, totalSteps)} / {totalSteps}
         </div>
       </div>
-      <div aria-hidden
-           style={{ height: 6, borderRadius: 9999, background: "rgba(0,0,0,0.08)", overflow: "hidden", marginBottom: 14 }}>
-        <div style={{
-          height: "100%",
-          width: `${((step + 1) / totalSteps) * 100}%`,
-          background: "var(--primary, #2ea7ff)",
-          transition: "width .25s ease",
-        }}/>
+      <div aria-hidden style={{ height: 6, borderRadius: 9999, background: "rgba(0,0,0,0.08)", overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ height: "100%", width: `${((step + 1) / totalSteps) * 100}%`, background: "var(--primary, #2ea7ff)", transition: "width .25s ease" }}/>
       </div>
 
-      {/* ---------- ТЕЛО ШАГА ---------- */}
+      {/* ТЕЛО */}
       {err && <div className="alert" style={{ marginBottom: 10 }}>{err}</div>}
 
       <div style={{ display: "grid", gap: 12 }}>
-        {/* Заголовок категории */}
-        <div style={{ fontSize: 18, fontWeight: 700 }}>
-          {current.label || current.code || "—"}
-        </div>
-
-        {/* Описание вопроса */}
+        <div style={{ fontSize: 18, fontWeight: 700 }}>{current.label || current.code || "—"}</div>
         <div className="note" style={{ fontSize: 15 }}>
           Did you have any <b>{current.label || current.code}</b> expenses in {year}?
         </div>
 
-        {/* Hint / Callout */}
         {(current.hint || "").length > 0 && (
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "24px 1fr",
-              gap: 10,
-              padding: "10px 12px",
-              border: "1px solid rgba(0,0,0,0.08)",
-              background: "rgba(0,0,0,0.03)",
-              borderRadius: 12,
-            }}
-          >
-            <div style={{
-              width: 24, height: 24, borderRadius: 9999,
-              display: "grid", placeItems: "center",
-              background: "rgba(0,0,0,0.06)", fontSize: 12
-            }}>💡</div>
+          <div style={{ display: "grid", gridTemplateColumns: "24px 1fr", gap: 10, padding: "10px 12px",
+                        border: "1px solid rgba(0,0,0,0.08)", background: "rgba(0,0,0,0.03)", borderRadius: 12 }}>
+            <div style={{ width: 24, height: 24, borderRadius: 9999, display: "grid", placeItems: "center",
+                          background: "rgba(0,0,0,0.06)", fontSize: 12 }}>💡</div>
             <div>
               <div style={{ fontWeight: 600, marginBottom: 2 }}>What to include</div>
               <div style={{ fontSize: 14.5 }}>{current.hint}</div>
@@ -173,28 +147,20 @@ export default function ExpenseWizard({ year, items = [], onSaveOne, onFinished,
           </div>
         )}
 
-        {/* Yes / No */}
         <SegmentedYesNo value={currentAnswer} onChange={setYesNo} />
 
-        {/* Поле суммы при Yes */}
         {currentAnswer === true && (
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontWeight: 600 }}>Amount</div>
-            <AmountInput
-              value={String(current.tempAmount ?? "")}
-              onChange={setAmount}
-              onInc={(d) => incAmount(d)}
-              inputMode={inputMode}
-              step={stepAttr}
-            />
-            <div className="note" style={{ marginTop: 2 }}>
-              {typeof min === "number" ? `Min ${formatMoney(min)}. ` : ""}{typeof max === "number" ? `Max ${formatMoney(max)}. ` : ""}You can adjust later.
-            </div>
-          </div>
+          <AmountBlock
+            value={String(current.tempAmount ?? "")}
+            onChange={setAmount}
+            onInc={incAmount}
+            inputMode={current?.ui_rules?.input_mode || "currency"}
+            validation={current?.ui_rules?.validation || {}}
+          />
         )}
       </div>
 
-      {/* ---------- ФУТЕР ---------- */}
+      {/* ФУТЕР */}
       <div className="row" style={{ marginTop: 16, alignItems: "center", justifyContent: "space-between" }}>
         <div className="row" style={{ gap: 8, alignItems: "center" }}>
           <button className="secondary" onClick={goBack} disabled={busy || step === 0}>Back</button>
@@ -230,29 +196,39 @@ function SegmentedYesNo({ value /* true|false|null */, onChange }) {
   );
 }
 
-function AmountInput({ value, onChange, onInc, inputMode = "currency", step = 0.01 }) {
+function AmountBlock({ value, onChange, onInc, inputMode = "currency", validation = {} }) {
+  const step = typeof validation.step === "number" ? validation.step : (inputMode === "integer" ? 1 : 0.01);
+  const min = typeof validation.gte === "number" ? validation.gte : 0;
+  const max = typeof validation.lte === "number" ? validation.lte : undefined;
   const incs = inputMode === "integer" ? [1, 5, 10] : [50, 100, 250];
+
   return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div style={{ position: "relative", maxWidth: 280 }}>
-        <span style={{ position: "absolute", left: 10, top: 10, pointerEvents: "none", opacity: 0.75, fontWeight: 600 }}>
-          {inputMode === "integer" ? "#" : "$"}
-        </span>
-        <input
-          inputMode={inputMode === "integer" ? "numeric" : "decimal"}
-          type="text"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          step={step}
-          style={{ width: "100%", padding: "10px 12px 10px 24px", fontSize: 18, borderRadius: 12, border: "1px solid rgba(0,0,0,0.1)", outline: "none" }}
-        />
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ fontWeight: 600 }}>Amount</div>
+      <div style={{ display: "grid", gap: 8 }}>
+        <div style={{ position: "relative", maxWidth: 280 }}>
+          <span style={{ position: "absolute", left: 10, top: 10, pointerEvents: "none", opacity: 0.75, fontWeight: 600 }}>
+            {inputMode === "integer" ? "#" : "$"}
+          </span>
+          <input
+            inputMode={inputMode === "integer" ? "numeric" : "decimal"}
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            step={step}
+            style={{ width: "100%", padding: "10px 12px 10px 24px", fontSize: 18, borderRadius: 12, border: "1px solid rgba(0,0,0,0.1)", outline: "none" }}
+          />
+        </div>
+        <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+          {incs.map(v => (
+            <button key={v} type="button" className="secondary" onClick={() => onInc(v)} style={{ borderRadius: 9999, padding: "6px 10px" }}>
+              +{v}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
-        {incs.map(v => (
-          <button key={v} type="button" className="secondary" onClick={() => onInc(v)} style={{ borderRadius: 9999, padding: "6px 10px" }}>
-            +{v}
-          </button>
-        ))}
+      <div className="note" style={{ marginTop: 2 }}>
+        {typeof min === "number" ? `Min ${formatMoney(min)}. ` : ""}{typeof max === "number" ? `Max ${formatMoney(max)}. ` : ""}You can adjust later.
       </div>
     </div>
   );
