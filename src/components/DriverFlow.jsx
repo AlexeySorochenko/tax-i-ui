@@ -16,7 +16,8 @@ import ExpenseWizard from "./ExpenseWizard";
 
 /**
  * Flow:
- * NEEDS_FIRM → NEEDS_PROFILE → (subview: expenses) → (subview: summary) → NEEDS_DOCUMENTS → NEEDS_PAYMENT → IN_REVIEW
+ * NEEDS_FIRM → NEEDS_PROFILE → (subview: expenses) → (subview: summary)
+ * → NEEDS_DOCUMENTS → NEEDS_PAYMENT → IN_REVIEW
  */
 export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
@@ -25,14 +26,14 @@ export default function DriverFlow({ API, token, me, year }) {
   const [firms, setFirms] = useState([]);
   const [subview, setSubview] = useState(null); // "profile" | "expenses" | "summary" | "documents" | "chat" | null
 
-  // Expenses state
+  // Expenses
   const [expBusy, setExpBusy] = useState(false);
   const [expSaving, setExpSaving] = useState(false);
   const [expError, setExpError] = useState("");
   const [expBiz, setExpBiz] = useState(null);     // { id, name, business_code, ... }
-  const [expItems, setExpItems] = useState([]);   // full-mode items
+  const [expItems, setExpItems] = useState([]);   // full-mode items (инициал. снимок)
 
-  // Summary state
+  // Summary
   const [sumBusy, setSumBusy] = useState(false);
   const [summary, setSummary] = useState(null);
   const [sumError, setSumError] = useState("");
@@ -61,56 +62,28 @@ export default function DriverFlow({ API, token, me, year }) {
     if (flow === "NEEDS_PROFILE" && subview == null) setSubview("profile");
   }, [flow, subview]);
 
-  // ---- KEY FIX: always use the id returned by POST /business/profiles (201) for next GET /expenses
+  // ensure profile, then load expenses (?mode=full). Всегда используем id из 201 Created.
   useEffect(() => {
     let alive = true;
 
     async function ensureBusinessProfile() {
-      // 1) try to get existing list
       const list = await getBusinessProfiles(API, token, me.id);
-      if (Array.isArray(list) && list.length > 0) {
-        return { profile: list[0], created: false };
-      }
-      // 2) create one (default to TAXI for now)
-      const created = await createBusinessProfile(API, token, {
-        name: "My Business",
-        business_code: "TAXI",
-      });
-      // created must contain id from 201 response — WE WILL USE THIS id
-      return { profile: created, created: true };
+      if (Array.isArray(list) && list.length > 0) return list[0];
+      return await createBusinessProfile(API, token, { name: "My Business", business_code: "TAXI" });
     }
 
-    async function fetchExpensesWithRetry(profileId, maxAttempts = 2) {
-      let attempt = 0, lastErr = null;
-      while (attempt < maxAttempts) {
-        try {
-          const full = await getBusinessExpenses(API, token, profileId, year, { full: true });
-          return full;
-        } catch (e) {
-          lastErr = e;
-          // if 404 just after create — small delay and retry once
-          if (e?.status === 404 && attempt === 0) {
-            await new Promise(r => setTimeout(r, 250));
-            attempt++;
-            continue;
-          }
-          throw e;
-        }
-      }
-      throw lastErr;
+    async function fetchExpenses(profileId) {
+      return await getBusinessExpenses(API, token, profileId, year, { full: true });
     }
 
     async function loadExpenses() {
       setExpBusy(true); setExpError("");
       try {
-        // always ensure or create profile, and keep the returned id
-        const { profile, created } = await ensureBusinessProfile();
+        const bp = await ensureBusinessProfile();
         if (!alive) return;
+        setExpBiz(bp);
 
-        setExpBiz(profile); // <-- save EXACT profile (with id from 201 if created)
-
-        // Now use THIS id to fetch expenses (mode=full)
-        let full = await fetchExpensesWithRetry(profile.id, 2);
+        const full = await fetchExpenses(bp.id);
         if (!alive) return;
         setExpItems(Array.isArray(full) ? full : []);
       } catch (e) {
@@ -121,9 +94,7 @@ export default function DriverFlow({ API, token, me, year }) {
       }
     }
 
-    if (subview === "expenses") {
-      loadExpenses();
-    }
+    if (subview === "expenses") loadExpenses();
     return () => { alive = false; };
     // eslint-disable-next-line
   }, [subview, year]);
@@ -159,20 +130,22 @@ export default function DriverFlow({ API, token, me, year }) {
     }
   }
 
+  // ⬇️ ВАЖНО: больше НЕ делаем setExpItems(next) — не трогаем props визарда на каждом шаге
   async function onSaveOneExpense(code, amountOrNull) {
     if (!expBiz) return;
     setExpSaving(true); setExpError("");
     try {
-      const next = (expItems || []).map(i => i.code === code ? { ...i, amount: amountOrNull } : i);
-      setExpItems(next);
+      // берём текущий снимок (чтобы отправить весь массив — как ждёт бэк)
+      const snapshot = (expItems || []).map(i => i.code === code ? { ...i, amount: amountOrNull } : i);
       await putBusinessExpenses(
         API, token, expBiz.id, year,
-        next.map(i => {
+        snapshot.map(i => {
           const payload = { code: i.code, amount: i.amount ?? 0 };
           if (i.is_custom) { payload.is_custom = true; if (i.custom_label) payload.custom_label = i.custom_label; }
           return payload;
         })
       );
+      // Не обновляем state expItems, чтобы не сбивать шаг внутри ExpenseWizard
     } catch (e) {
       setExpError(String(e?.message || e));
     } finally {
