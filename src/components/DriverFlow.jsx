@@ -16,7 +16,7 @@ import ExpenseWizard from "./ExpenseWizard";
 
 /**
  * Flow:
- * NEEDS_FIRM → NEEDS_PROFILE → (subview: expenses) → (subview: summary) → NEEDS_DOCUMENTS → NEEDS_PAYMENT → IN_REVIEW (чат)
+ * NEEDS_FIRM → NEEDS_PROFILE → (subview: expenses) → (subview: summary) → NEEDS_DOCUMENTS → NEEDS_PAYMENT → IN_REVIEW
  */
 export default function DriverFlow({ API, token, me, year }) {
   const [loading, setLoading] = useState(true);
@@ -25,14 +25,14 @@ export default function DriverFlow({ API, token, me, year }) {
   const [firms, setFirms] = useState([]);
   const [subview, setSubview] = useState(null); // "profile" | "expenses" | "summary" | "documents" | "chat" | null
 
-  // Состояние визарда расходов
+  // Expenses state
   const [expBusy, setExpBusy] = useState(false);
   const [expSaving, setExpSaving] = useState(false);
   const [expError, setExpError] = useState("");
-  const [expBiz, setExpBiz] = useState(null);
-  const [expItems, setExpItems] = useState([]);
+  const [expBiz, setExpBiz] = useState(null);     // { id, name, business_code, ... }
+  const [expItems, setExpItems] = useState([]);   // full-mode items
 
-  // Состояние Summary
+  // Summary state
   const [sumBusy, setSumBusy] = useState(false);
   const [summary, setSummary] = useState(null);
   const [sumError, setSumError] = useState("");
@@ -48,7 +48,6 @@ export default function DriverFlow({ API, token, me, year }) {
   }
   useEffect(() => { refresh(); /* eslint-disable-next-line */ }, [year]);
 
-  // Загрузка фирм
   useEffect(() => {
     if (flow === "NEEDS_FIRM") {
       listFirms(API, token)
@@ -58,29 +57,60 @@ export default function DriverFlow({ API, token, me, year }) {
     // eslint-disable-next-line
   }, [flow]);
 
-  // Открываем онбординг профиля один раз
   useEffect(() => {
     if (flow === "NEEDS_PROFILE" && subview == null) setSubview("profile");
   }, [flow, subview]);
 
-  // Подготовка визарда расходов: бизнес-профиль + список расходов (mode=full)
+  // ---- KEY FIX: always use the id returned by POST /business/profiles (201) for next GET /expenses
   useEffect(() => {
     let alive = true;
+
+    async function ensureBusinessProfile() {
+      // 1) try to get existing list
+      const list = await getBusinessProfiles(API, token, me.id);
+      if (Array.isArray(list) && list.length > 0) {
+        return { profile: list[0], created: false };
+      }
+      // 2) create one (default to TAXI for now)
+      const created = await createBusinessProfile(API, token, {
+        name: "My Business",
+        business_code: "TAXI",
+      });
+      // created must contain id from 201 response — WE WILL USE THIS id
+      return { profile: created, created: true };
+    }
+
+    async function fetchExpensesWithRetry(profileId, maxAttempts = 2) {
+      let attempt = 0, lastErr = null;
+      while (attempt < maxAttempts) {
+        try {
+          const full = await getBusinessExpenses(API, token, profileId, year, { full: true });
+          return full;
+        } catch (e) {
+          lastErr = e;
+          // if 404 just after create — small delay and retry once
+          if (e?.status === 404 && attempt === 0) {
+            await new Promise(r => setTimeout(r, 250));
+            attempt++;
+            continue;
+          }
+          throw e;
+        }
+      }
+      throw lastErr;
+    }
+
     async function loadExpenses() {
       setExpBusy(true); setExpError("");
       try {
-        // 1) берём/создаем бизнес-профиль
-        const list = await getBusinessProfiles(API, token, me.id);
-        let bp = (Array.isArray(list) && list[0]) || null;
-        if (!bp) {
-          // по умолчанию используем TAXI; если нужна развилка Taxi/Truck — добавим позже отдельным шагом
-          bp = await createBusinessProfile(API, token, { name: "My Business", business_code: "TAXI" });
-        }
+        // always ensure or create profile, and keep the returned id
+        const { profile, created } = await ensureBusinessProfile();
         if (!alive) return;
-        setExpBiz(bp);
 
-        // 2) тянем новый "умный" список
-        const full = await getBusinessExpenses(API, token, bp.id, year, { full: true });
+        setExpBiz(profile); // <-- save EXACT profile (with id from 201 if created)
+
+        // Now use THIS id to fetch expenses (mode=full)
+        let full = await fetchExpensesWithRetry(profile.id, 2);
         if (!alive) return;
         setExpItems(Array.isArray(full) ? full : []);
       } catch (e) {
@@ -90,16 +120,19 @@ export default function DriverFlow({ API, token, me, year }) {
         if (alive) setExpBusy(false);
       }
     }
-    if (subview === "expenses") loadExpenses();
+
+    if (subview === "expenses") {
+      loadExpenses();
+    }
     return () => { alive = false; };
     // eslint-disable-next-line
   }, [subview, year]);
 
-  // Загрузка бизнес-сводки после визарда
+  // Summary loader
   useEffect(() => {
     let alive = true;
     async function loadSummary() {
-      if (!expBiz) return;
+      if (!expBiz?.id) return;
       setSumBusy(true); setSumError(""); setSummary(null);
       try {
         const sum = await getBusinessSummary(API, token, expBiz.id, year);
@@ -120,13 +153,12 @@ export default function DriverFlow({ API, token, me, year }) {
   async function choose(firmId) {
     try {
       await selectFirm(API, token, firmId);
-      await refresh(); // бэк переключит на NEEDS_PROFILE
+      await refresh();
     } catch (e) {
       alert(String(e?.message || e));
     }
   }
 
-  // Сохранение одной позиции расходов (посылаем весь снапшот из визарда выше в DriverFlow)
   async function onSaveOneExpense(code, amountOrNull) {
     if (!expBiz) return;
     setExpSaving(true); setExpError("");
@@ -148,7 +180,7 @@ export default function DriverFlow({ API, token, me, year }) {
     }
   }
 
-  /* ===== Сабвью ===== */
+  /* ===== Subviews ===== */
 
   if (subview === "profile") {
     return (
@@ -157,7 +189,7 @@ export default function DriverFlow({ API, token, me, year }) {
         token={token}
         me={me}
         initialStep={2}
-        onDoneNext={() => { setSubview("expenses"); }} // → визард расходов
+        onDoneNext={() => { setSubview("expenses"); }}
       />
     );
   }
@@ -174,7 +206,7 @@ export default function DriverFlow({ API, token, me, year }) {
               items={expItems}
               saving={expSaving}
               onSaveOne={onSaveOneExpense}
-              onFinished={() => setSubview("summary")} // после визарда → сводка
+              onFinished={() => setSubview("summary")}
             />
           )
         }
@@ -223,7 +255,6 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
-  // Чеклист документов
   if (subview === "documents") {
     return (
       <div className="card">
@@ -232,10 +263,9 @@ export default function DriverFlow({ API, token, me, year }) {
     );
   }
 
-  // Чат — только после оплаты
   if (subview === "chat") {
     if (flow !== "IN_REVIEW") {
-      setSubview(null); // защита
+      setSubview(null);
     } else {
       return (
         <div className="card">
@@ -250,8 +280,6 @@ export default function DriverFlow({ API, token, me, year }) {
       );
     }
   }
-
-  /* ===== Основные состояния по flow ===== */
 
   function priceBadge(pricing) {
     if (!pricing) return null;
@@ -299,13 +327,12 @@ export default function DriverFlow({ API, token, me, year }) {
           <h2>Submit for review</h2>
           <p>All documents are ready. Please submit to your accountant.</p>
           <div className="row" style={{ gap: 8 }}>
-            {/* ЧАТА здесь нет — появится после успешного Submit */}
             <button
               className="primary"
               onClick={async () => {
                 try {
                   await submitPaymentStub(API, token, year);
-                  await refresh(); // ожидается переход в IN_REVIEW
+                  await refresh();
                 } catch (e) {
                   alert(String(e));
                 }
