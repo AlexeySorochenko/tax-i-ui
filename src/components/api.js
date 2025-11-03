@@ -1,4 +1,4 @@
-// Универсальные вызовы API + хелперы, совместимые со старым DriverSelf.jsx
+// Универсальные вызовы API + хелперы, совместимые со старым DriverSelf.jsx и App.jsx
 
 /* ========== базовые хелперы ========== */
 export const authHeaders = (token) => (token ? { Authorization: `Bearer ${token}` } : {});
@@ -24,7 +24,10 @@ export const asJson = async (res) => {
 
 // Добавляет query-параметры к URL
 export const withQuery = (base, params = {}) => {
-  const url = new URL(base, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+  const url = new URL(
+    base,
+    typeof window !== "undefined" ? window.location.origin : "http://localhost"
+  );
   Object.entries(params).forEach(([k, v]) => {
     if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
   });
@@ -76,6 +79,11 @@ export async function login(API, { email, password }) {
 export async function me(API, token) {
   const res = await fetch(`${API}/auth/me`, { headers: { ...authHeaders(token) } });
   return asJson(res);
+}
+
+// Совместимость со старым App.jsx
+export async function fetchMe(API, token) {
+  return me(API, token);
 }
 
 /* ========== фирмы (маркетплейс) ========== */
@@ -166,7 +174,7 @@ export async function getBusinessSummary(API, token, businessProfileId, year) {
 
 /* ========== документы/загрузка (DriverSelf использует эти хелперы) ========== */
 
-// Примером: presigned download url
+// Пример: presigned download url
 export async function getDocumentDownloadUrl(API, token, documentId) {
   const res = await fetch(`${API}/api/v1/documents/download-url/${documentId}`, {
     headers: { ...authHeaders(token) },
