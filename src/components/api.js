@@ -145,3 +145,9 @@ export async function uploadToRequirement(API, token, requirementId, file) {
   });
   return handleJson(r);
 }
+
+// --- Backward compatibility aliases ---
+export async function loginToken(API, identifier, password) {
+  // старое имя, проксируем на новый метод
+  return login(API, identifier, password);
+}
