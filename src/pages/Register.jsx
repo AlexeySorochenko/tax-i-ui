@@ -1,166 +1,67 @@
-import React, { useMemo, useState } from "react";
-import { login, register } from "../components/api";
+// src/pages/Register.jsx
+import React, { useState } from "react";
+import { register, loginToken } from "../components/api";
 
-export default function Register({ API, onLoggedIn }) {
-  const inviteCode = useMemo(
-    () => new URLSearchParams(location.search).get("invite_code") || "",
-    []
-  );
-
-  const [form, setForm] = useState({
-    email: "",
-    phone: "",
-    first_name: "",
-    last_name: "",
-    patronymic: "",
-    password: "",
-  });
-  const [busy, setBusy] = useState(false);
+export default function Register({ API, onLoggedIn, onBack }) {
+  const [identifier, setIdentifier] = useState("");
+  const [p1, setP1] = useState("");
+  const [p2, setP2] = useState("");
   const [err, setErr] = useState("");
-  const [fieldErr, setFieldErr] = useState({});
-
-  const change = (k) => (e) =>
-    setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  // phone: оставляем только + и цифры, один ведущий +
-  const changePhone = (e) => {
-    let v = e.target.value.replace(/[^\d+]/g, "");
-    if (!v.startsWith("+")) v = "+" + v.replace(/\+/g, "");
-    v = v.slice(0, 16); // + и до 15 цифр
-    setForm((f) => ({ ...f, phone: v }));
-  };
-
-  const validate = () => {
-    const fe = {};
-    const emailOk = /\S+@\S+\.\S+/.test(form.email.trim());
-    if (!emailOk) fe.email = "Invalid email.";
-
-    const phoneOk = /^\+\d{6,15}$/.test(form.phone);
-    if (!phoneOk) fe.phone = "Use international format like +15551234567.";
-
-    if (!form.first_name.trim()) fe.first_name = "First name is required.";
-    if (!form.last_name.trim()) fe.last_name = "Last name is required.";
-
-    if (!form.password || form.password.length < 8) {
-      fe.password = "Password must be at least 8 characters.";
-    }
-    setFieldErr(fe);
-    return Object.keys(fe).length === 0;
-  };
+  const [busy, setBusy] = useState(false);
 
   const doRegister = async () => {
-    setErr(""); setFieldErr({});
-    if (!validate()) return;
-
+    setErr("");
+    if (p1.length < 6) { setErr("Password must be at least 6 characters"); return; }
+    if (p1 !== p2) { setErr("Passwords do not match"); return; }
     setBusy(true);
     try {
-      // регистрация драйвера
-      await register(API, {
-        email: form.email.trim(),
-        phone: form.phone,
-        first_name: form.first_name.trim(),
-        last_name: form.last_name.trim(),
-        patronymic: form.patronymic.trim(),
-        password: form.password, // min 8 уже проверили
-      });
-
-      // логин (ВАЖНО: передаём объект, не 2 аргумента)
-      const tok = await login(API, { email: form.email.trim(), password: form.password });
+      await register(API, { identifier: identifier.trim(), password: p1 });
+      const tok = await loginToken(API, identifier.trim(), p1);
       localStorage.setItem("access_token", tok.access_token);
-      onLoggedIn?.(tok.access_token);
+      onLoggedIn(tok.access_token);
     } catch (e) {
-      setErr(extractErr(e));
-    } finally {
-      setBusy(false);
-    }
+      setErr(String(e));
+    } finally { setBusy(false); }
   };
 
   return (
-    <div className="grid" style={{ maxWidth: 520, margin: "24px auto" }}>
-      <div className="card">
-        <h2>Create account</h2>
-
-        {inviteCode && (
-          <div className="hero" style={{ marginTop: 8 }}>
-            You are signing up via invite. Your firm link will be created automatically.
-          </div>
-        )}
-
-        {err && (
-          <div className="alert" style={{ marginTop: 8, wordBreak: "break-all" }}>
-            {err}
-          </div>
-        )}
-
-        <div className="kv" style={{ marginTop: 10 }}>
-          <div className="k">Email</div>
-          <div>
-            <input
-              type="email"
-              inputMode="email"
-              autoComplete="email"
-              placeholder="name@example.com"
-              value={form.email}
-              onChange={change("email")}
-            />
-            {fieldErr.email && <div className="alert" style={{ marginTop: 6 }}>{fieldErr.email}</div>}
-          </div>
-
-          <div className="k">Phone</div>
-          <div>
-            <input
-              type="tel"
-              inputMode="tel"
-              placeholder="+1 555 123 4567"
-              value={form.phone}
-              onChange={changePhone}
-            />
-            {fieldErr.phone && <div className="alert" style={{ marginTop: 6 }}>{fieldErr.phone}</div>}
-          </div>
-
-          <div className="k">First name</div>
-          <div>
-            <input value={form.first_name} onChange={change("first_name")} autoComplete="given-name" />
-            {fieldErr.first_name && <div className="alert" style={{ marginTop: 6 }}>{fieldErr.first_name}</div>}
-          </div>
-
-          <div className="k">Last name</div>
-          <div>
-            <input value={form.last_name} onChange={change("last_name")} autoComplete="family-name" />
-            {fieldErr.last_name && <div className="alert" style={{ marginTop: 6 }}>{fieldErr.last_name}</div>}
-          </div>
-
-          <div className="k">Middle name</div>
-          <input value={form.patronymic} onChange={change("patronymic")} autoComplete="additional-name" />
-
-          <div className="k">Password</div>
-          <div>
-            <input
-              type="password"
-              placeholder="At least 8 characters"
-              value={form.password}
-              onChange={change("password")}
-              autoComplete="new-password"
-            />
-            {fieldErr.password && <div className="alert" style={{ marginTop: 6 }}>{fieldErr.password}</div>}
-          </div>
-        </div>
-
-        <div className="row" style={{ justifyContent: "flex-end", marginTop: 12 }}>
-          <button onClick={doRegister} disabled={busy}>
-            {busy ? "Creating…" : "Create account"}
-          </button>
-        </div>
+    <div className="card" style={{ maxWidth: 420, margin: "24px auto" }}>
+      <h2>Create account</h2>
+      <div className="note" style={{marginTop:6}}>
+        One <b>Identifier</b> (Email / SSN-EIN / Phone) + password.
+      </div>
+      {err && <div className="alert" style={{marginTop:8, wordBreak:"break-all"}}>{err}</div>}
+      <div className="kv" style={{marginTop:12}}>
+        <div className="k">Identifier</div>
+        <input
+          placeholder="email • 123456789 • +1 555 123 4567"
+          value={identifier}
+          onChange={(e)=>setIdentifier(e.target.value)}
+          autoComplete="username"
+        />
+        <div className="k">Password</div>
+        <input
+          type="password"
+          placeholder="Minimum 6 chars"
+          value={p1}
+          onChange={(e)=>setP1(e.target.value)}
+          autoComplete="new-password"
+        />
+        <div className="k">Re-enter</div>
+        <input
+          type="password"
+          placeholder="Repeat password"
+          value={p2}
+          onChange={(e)=>setP2(e.target.value)}
+          autoComplete="new-password"
+        />
+      </div>
+      <div className="row" style={{justifyContent:"space-between", marginTop:12}}>
+        <button className="secondary" onClick={onBack} disabled={busy}>Back to login</button>
+        <button onClick={doRegister} disabled={busy || !identifier || !p1 || !p2}>
+          {busy ? "Creating…" : "Create account"}
+        </button>
       </div>
     </div>
   );
-}
-
-function extractErr(e) {
-  try {
-    const j = JSON.parse(String(e.message || e));
-    return j.detail || e.message || "Error";
-  } catch {
-    return String(e.message || e);
-  }
 }
