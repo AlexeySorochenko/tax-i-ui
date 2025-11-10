@@ -1,79 +1,83 @@
+// src/App.jsx
 import React, { useEffect, useState } from "react";
-import { fetchMe } from "./components/api";
-import DriverFlow from "./components/DriverFlow";
+import { fetchMe, getProfiles } from "./components/api";
 import Auth from "./pages/Auth";
+import ProfilesHome from "./pages/ProfilesHome";
+import NewProfile from "./pages/NewProfile";
+import Checklist from "./pages/Checklist";
 
 const API = import.meta.env.VITE_API || "https://tax-i.onrender.com";
 
 export default function App() {
-  const [token, setToken] = useState(() => localStorage.getItem("access_token") || "");
+  const [token, setToken] = useState(localStorage.getItem("access_token") || "");
   const [me, setMe] = useState(null);
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [dark, setDark] = useState(false);
-  const [authView, setAuthView] = useState(null); // 'login' | 'register' | null
+  const [route, setRoute] = useState("loading"); // loading | home | new | checklist
+  const [ctx, setCtx] = useState(null); // { profileId, profileType }
 
   useEffect(() => {
-    if (!token) { setMe(null); return; }
-    fetchMe(API, token)
-      .then(setMe)
-      .catch(() => { localStorage.removeItem("access_token"); setToken(""); setMe(null); });
+    let alive = true;
+    (async () => {
+      if (!token) { setRoute("auth"); return; }
+      try {
+        const u = await fetchMe(API, token);
+        if (!alive) return;
+        setMe(u);
+        const list = await getProfiles(API, token);
+        if (!alive) return;
+        if (Array.isArray(list) && list.length > 0) {
+          setRoute("home");
+        } else {
+          setRoute("new");
+        }
+      } catch {
+        localStorage.removeItem("access_token");
+        setToken("");
+        setRoute("auth");
+      }
+    })();
+    return () => { alive = false; };
   }, [token]);
 
-  const logout = () => { localStorage.removeItem("access_token"); setToken(""); setMe(null); };
-  const onLoggedIn = (t) => { localStorage.setItem("access_token", t); setToken(t); setAuthView(null); };
+  if (route === "auth") {
+    return <Auth API={API} onLoggedIn={(tok) => { localStorage.setItem("access_token", tok); setToken(tok); }} />;
+  }
 
-  const Topbar = () => (
-    <div className="topbar">
-      <div className="brand"><div className="logo">🧾</div><h1>Tax Intake</h1></div>
+  if (route === "loading") {
+    return <div style={{padding:24}}>Loading…</div>;
+  }
 
-      {/* неавторизован — только тема */}
-      {!me ? (
-        <div className="row">
-          <button className="secondary" onClick={()=>setDark(v=>!v)}>{dark ? "Light" : "Dark"}</button>
-        </div>
-      ) : (
-        <div className="row">
-          {/* выбор года только после входа */}
-          <select value={year} onChange={(e)=>setYear(Number(e.target.value))}>
-            {Array.from({length:3}).map((_,i)=> {
-              const y = new Date().getFullYear() - i;
-              return <option key={y} value={y}>{y}</option>;
-            })}
-          </select>
-          <button className="secondary" onClick={()=>setDark(v=>!v)}>{dark ? "Light" : "Dark"}</button>
-          <button onClick={logout}>Logout</button>
-        </div>
-      )}
-    </div>
-  );
+  if (route === "new") {
+    return (
+      <NewProfile
+        API={API}
+        token={token}
+        onCreated={(profileId, profileType) => { setCtx({ profileId, profileType }); setRoute("checklist"); }}
+        onCancel={() => setRoute("home")}
+      />
+    );
+  }
 
-  const Welcome = () => (
-    <div className="grid" style={{ maxWidth: 560, margin: "24px auto" }}>
-      <div className="card">
-        <h2>Welcome</h2>
-        <div className="note" style={{marginTop:6}}>Login or create an account to continue.</div>
-        <div className="row" style={{gap:12, marginTop:16, flexWrap:"wrap"}}>
-          <button onClick={()=>setAuthView("login")}>Login</button>
-          <button className="secondary" onClick={()=>setAuthView("register")}>Create account</button>
-        </div>
-      </div>
-    </div>
-  );
+  if (route === "checklist" && ctx) {
+    return (
+      <Checklist
+        API={API}
+        token={token}
+        profileId={ctx.profileId}
+        profileType={ctx.profileType}
+        onDone={() => setRoute("home")}
+        onBack={() => setRoute("home")}
+      />
+    );
+  }
 
+  // route === "home"
   return (
-    <div className={dark ? "dark" : ""}>
-      <div className="app">
-        <Topbar />
-        {!me && (authView ? (
-          <Auth API={API} defaultTab={authView} onLoggedIn={onLoggedIn} onBack={()=>setAuthView(null)} />
-        ) : <Welcome />)}
-
-        {me && me.role === "driver" && (
-          <DriverFlow API={API} token={token} me={me} year={year} />
-        )}
-
-        {/* кабинет бухгалтера убран с экрана, чтобы не путать водителя */}
-      </div>
-    </div>
+    <ProfilesHome
+      API={API}
+      token={token}
+      onNew={() => setRoute("new")}
+      onOpen={(profileId, profileType) => { setCtx({ profileId, profileType }); setRoute("checklist"); }}
+      onLogout={() => { localStorage.removeItem("access_token"); setToken(""); }}
+    />
   );
 }
